@@ -533,21 +533,95 @@ button {
   font: inherit;
 }
 
+.chat-open-button {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 3;
+  display: grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  border: 1px solid rgba(207, 214, 222, 0.85);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.92);
+  color: #10bfa2;
+  box-shadow: 0 10px 22px rgba(16, 20, 24, 0.08);
+  cursor: pointer;
+  opacity: 0.72;
+  transform: translateY(-2px);
+  transition:
+    background 140ms ease,
+    border-color 140ms ease,
+    opacity 140ms ease,
+    transform 140ms ease;
+}
+
+.chat-open-button:hover,
+.chat-open-button:focus-visible {
+  border-color: rgba(16, 191, 162, 0.42);
+  background: #ffffff;
+  opacity: 1;
+  outline: none;
+  transform: translateY(0);
+}
+
+:where(
+    .page-header,
+    .panel[data-chat-explain],
+    .signal-hero-panel,
+    .signal-section-card,
+    .signal-next-action,
+    .signal-facts-panel,
+    .signal-lifecycle-item,
+    .signal-path-panel,
+    .chat-widget
+  ) {
+  position: relative;
+}
+
+:where(
+    .page-header,
+    .panel[data-chat-explain],
+    .signal-hero-panel,
+    .signal-section-card,
+    .signal-next-action,
+    .signal-facts-panel,
+    .signal-lifecycle-item,
+    .signal-path-panel,
+    .chat-widget
+  ):hover
+  > .chat-open-button,
+:where(
+    .page-header,
+    .panel[data-chat-explain],
+    .signal-section-card,
+    .signal-next-action,
+    .signal-facts-panel,
+    .signal-lifecycle-item,
+    .signal-path-panel,
+    .chat-widget
+  ):focus-within
+  > .chat-open-button {
+  opacity: 1;
+  transform: translateY(0);
+}
+
 .assistant-panel-active {
   position: fixed;
   right: 18px;
-  top: 90px;
-  z-index: 40;
+  top: 14px;
+  z-index: 1000;
   width: min(860px, calc(100vw - 126px));
   max-width: calc(100vw - 126px);
   margin-left: 0;
-  height: calc(100vh - 86px);
+  height: min(920px, calc(100vh - 28px));
   grid-template-rows: auto auto auto minmax(0, 1fr);
   background: #f8fbfb;
   box-shadow:
     0 24px 70px rgba(20, 35, 50, 0.24),
     0 0 0 1px rgba(16, 20, 24, 0.06);
-  transform: translateY(-8px);
+  transform: none;
 }
 
 .assistant-handle {
@@ -556,6 +630,21 @@ button {
   margin: 0 auto 10px;
   border-radius: 999px;
   background: var(--line-strong);
+}
+
+.assistant-open-surface {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  border: 0;
+  border-radius: inherit;
+  background: transparent;
+  cursor: pointer;
+}
+
+.assistant-open-surface:focus-visible {
+  outline: 2px solid rgba(22, 119, 255, 0.24);
+  outline-offset: -6px;
 }
 
 .assistant-panel-header,
@@ -1027,6 +1116,11 @@ button {
   box-shadow: 0 10px 28px rgba(16, 20, 24, 0.04);
 }
 
+.chat-widget > .chat-open-button {
+  top: 8px;
+  right: 8px;
+}
+
 .chat-widget p {
   margin: 8px 0 0;
   color: var(--muted);
@@ -1037,7 +1131,7 @@ button {
 .chat-widget-title {
   border-bottom: 1px solid var(--line-soft);
   color: var(--muted);
-  padding: 10px 12px;
+  padding: 10px 44px 10px 12px;
   font-size: 12px;
   font-weight: 800;
 }
@@ -1126,7 +1220,7 @@ button {
 .chat-widget-scorecard-item {
   display: grid;
   gap: 8px;
-  padding: 14px;
+  padding: 14px 44px 14px 14px;
 }
 
 .chat-widget-kpi-label {
@@ -1181,6 +1275,7 @@ button {
 .chat-widget-scorecard-item {
   border-top: 1px solid var(--line-soft);
   border-left: 1px solid var(--line-soft);
+  padding: 14px;
 }
 
 .chat-widget-scorecard-item:nth-child(odd) {
@@ -1190,7 +1285,7 @@ button {
 .chat-widget-bars {
   display: grid;
   gap: 12px;
-  padding: 14px;
+  padding: 44px 14px 14px;
 }
 
 .chat-widget-bar-row {
@@ -1252,7 +1347,7 @@ button {
 .chat-widget-product-body {
   display: grid;
   gap: 10px;
-  padding: 14px;
+  padding: 14px 44px 14px 14px;
 }
 
 .chat-widget-product-name {
@@ -1306,7 +1401,7 @@ button {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
   gap: 10px;
-  padding: 14px;
+  padding: 14px 44px 14px 14px;
 }
 
 .chat-widget-alert svg {
@@ -1809,7 +1904,15 @@ button {
   align-items: center;
   min-height: 78px;
   border-right: 1px solid var(--line-soft);
-  padding: 12px;
+  padding: 12px 42px 12px 12px;
+}
+
+.signal-lifecycle-item > .chat-open-button {
+  top: 8px;
+  right: 8px;
+  width: 24px;
+  height: 24px;
+  border-radius: 9px;
 }
 
 .signal-lifecycle-item:last-child {
@@ -1885,7 +1988,7 @@ button {
   border: 1px solid var(--line);
   border-radius: 18px;
   background: #ffffff;
-  padding: 18px;
+  padding: 18px 52px 18px 18px;
 }
 
 .signal-section-header {
@@ -2122,7 +2225,7 @@ button {
   gap: 12px;
   border: 1px solid var(--line-soft);
   border-radius: 14px;
-  padding: 14px;
+  padding: 14px 44px 14px 14px;
 }
 
 .signal-path-panel p {
@@ -2384,6 +2487,13 @@ button {
   align-items: center;
 }
 
+.signal-row-actions {
+  display: grid;
+  min-width: 0;
+  gap: 10px;
+  justify-items: end;
+}
+
 .task-copy {
   max-width: 760px;
 }
@@ -2566,6 +2676,14 @@ button {
 
   .assistant-panel {
     display: none;
+  }
+
+  .assistant-panel-active {
+    display: grid;
+    right: 12px;
+    left: 12px;
+    width: auto;
+    max-width: none;
   }
 }
 

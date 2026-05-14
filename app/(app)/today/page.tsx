@@ -1,5 +1,6 @@
 import Link from "next/link";
 
+import { ChatOpenButton } from "@/components/chat-open-button";
 import { EmptyState } from "@/components/empty-state";
 import { PageHeader } from "@/components/page-header";
 import { SeverityBadge, StatusBadge } from "@/components/status-badge";
@@ -45,6 +46,7 @@ export default async function TodayPage() {
               data-chat-prompt={`Explain this Signal: ${signal.title}. Why does it matter and what should I review first?`}
               key={signal.id}
             >
+              <ChatOpenButton label={`Open ${signal.title} in chat`} />
               <div className="task-primary">
                 <div className="task-copy">
                   <div className="mb-3 flex flex-wrap items-center gap-2">

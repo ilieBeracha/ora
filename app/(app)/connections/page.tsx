@@ -1,3 +1,4 @@
+import { ChatOpenButton } from "@/components/chat-open-button";
 import { EmptyState } from "@/components/empty-state";
 import { PageHeader } from "@/components/page-header";
 import { PendingSubmitButton } from "@/components/pending-submit-button";
@@ -81,6 +82,9 @@ export default async function ConnectionsPage() {
               }" and what I should check next.`}
               key={connection.id}
             >
+              <ChatOpenButton
+                label={`Open ${connection.shopName ?? connection.shopDomain} in chat`}
+              />
               <div className="connection-primary">
                 <div>
                   <div className="mb-2 flex flex-wrap items-center gap-2">
@@ -216,6 +220,9 @@ export default async function ConnectionsPage() {
                 klaviyoConfig?.accountName ?? "Klaviyo"
               }" and what customer or lifecycle questions it can answer.`}
             >
+              <ChatOpenButton
+                label={`Open ${klaviyoConfig?.accountName ?? "Klaviyo"} in chat`}
+              />
               <div className="connection-primary">
                 <div>
                   <div className="mb-2 flex flex-wrap items-center gap-2">

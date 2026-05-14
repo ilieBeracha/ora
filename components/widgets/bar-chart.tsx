@@ -1,5 +1,6 @@
 import type { ChatWidget } from "@/lib/chat/widgets";
 
+import { ChatOpenButton } from "@/components/chat-open-button";
 import { formatWidgetValue } from "@/components/widgets/format";
 
 type BarChartProps = Extract<ChatWidget, { type: "bar_chart" }>["props"];
@@ -29,6 +30,7 @@ export function BarChartWidget({
         title ? `: ${title}` : ""
       } and call out the main pattern.`}
     >
+      <ChatOpenButton label={`Open ${title ?? "chart"} in chat`} />
       {title ? <div className="chat-widget-title">{title}</div> : null}
       <div className="chat-widget-bars">
         {rows.map((row) => (

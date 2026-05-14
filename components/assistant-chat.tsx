@@ -9,6 +9,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { createPortal } from "react-dom";
 import {
   History,
   LoaderCircle,
@@ -124,6 +125,7 @@ export function AssistantChat() {
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [sessions, setSessions] = useState<ChatSessionListItem[]>([]);
   const [contextMode, setContextMode] = useState<ChatContextMode>("focused");
+  const [mounted, setMounted] = useState(false);
   const [activeContext, setActiveContext] = useState<ChatOpenContext | null>(
     null,
   );
@@ -159,6 +161,31 @@ export function AssistantChat() {
     },
     [pending],
   );
+  const openChatFromContextTarget = useCallback(
+    (target: HTMLElement, event?: { preventDefault: () => void }) => {
+      if (pending) return false;
+
+      const prompt = getChatContextPrompt(target);
+      if (!prompt) return false;
+
+      if (target.dataset.chatPreventNav === "true") {
+        event?.preventDefault();
+      }
+
+      setActiveContext({
+        ...readChatContext(target),
+        defaultPrompt: prompt,
+      });
+      setIsOpen(true);
+
+      return true;
+    },
+    [pending],
+  );
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
 
   useEffect(() => {
     let ignore = false;
@@ -199,7 +226,12 @@ export function AssistantChat() {
     }
 
     function handlePointerDown(event: PointerEvent) {
-      if (getChatContextTarget(event.target)) return;
+      const contextTarget = getChatContextTarget(event.target);
+
+      if (contextTarget) {
+        openChatFromContextTarget(contextTarget, event);
+        return;
+      }
 
       setIsOpen(Boolean(targetIsInsidePanel(event.target)));
     }
@@ -217,25 +249,38 @@ export function AssistantChat() {
       document.removeEventListener("pointerdown", handlePointerDown);
       document.removeEventListener("focusin", handleFocusIn);
     };
-  }, []);
+  }, [openChatFromContextTarget]);
+
+  useEffect(() => {
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        setIsOpen(false);
+        return;
+      }
+
+      if (event.key !== "Enter" && event.key !== " ") return;
+
+      const contextTarget = getChatContextTarget(event.target);
+      if (!contextTarget) return;
+
+      if (openChatFromContextTarget(contextTarget, event)) {
+        event.preventDefault();
+      }
+    }
+
+    document.addEventListener("keydown", handleKeyDown);
+
+    return () => {
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [openChatFromContextTarget]);
 
   useEffect(() => {
     function handleContextClick(event: globalThis.MouseEvent) {
       const target = getChatContextTarget(event.target);
-      if (!target || panelRef.current?.contains(target) || pending) return;
+      if (!target) return;
 
-      const prompt = getChatContextPrompt(target);
-      if (!prompt) return;
-
-      if (target.dataset.chatPreventNav === "true") {
-        event.preventDefault();
-      }
-
-      setActiveContext({
-        ...readChatContext(target),
-        defaultPrompt: prompt,
-      });
-      setIsOpen(true);
+      openChatFromContextTarget(target, event);
     }
 
     document.addEventListener("click", handleContextClick);
@@ -243,7 +288,7 @@ export function AssistantChat() {
     return () => {
       document.removeEventListener("click", handleContextClick);
     };
-  }, [pending]);
+  }, [openChatFromContextTarget]);
 
   useEffect(() => {
     threadRef.current?.scrollTo({
@@ -297,6 +342,10 @@ export function AssistantChat() {
   function changeContextMode(nextMode: ChatContextMode) {
     setContextMode(nextMode);
     window.localStorage.setItem(chatContextModeStorageKey, nextMode);
+  }
+
+  function closeChat() {
+    setIsOpen(false);
   }
 
   async function submitMessage(event: FormEvent<HTMLFormElement>) {
@@ -509,18 +558,26 @@ export function AssistantChat() {
     ]);
   }
 
-  const isExpanded = isOpen || pending;
+  const isExpanded = isOpen;
   const showSuggestionCard = !latestAssistantHasFollowups(messages);
 
-  return (
+  const panel = (
     <aside
       aria-label="Signal assistant"
       className={`assistant-panel${isExpanded ? " assistant-panel-active" : ""}`}
+      onClickCapture={() => setIsOpen(true)}
       onFocusCapture={() => setIsOpen(true)}
       onPointerDownCapture={() => setIsOpen(true)}
       ref={panelRef}
     >
       <div className="assistant-handle" />
+      {!isExpanded ? (
+        <button
+          aria-label="Open chat"
+          className="assistant-open-surface"
+          type="button"
+        />
+      ) : null}
 
       {isExpanded ? (
         <>
@@ -559,6 +616,13 @@ export function AssistantChat() {
                 type="button"
               >
                 <Plus size={16} aria-hidden="true" />
+              </button>
+              <button
+                aria-label="Close chat"
+                onClick={closeChat}
+                type="button"
+              >
+                <X size={16} aria-hidden="true" />
               </button>
             </div>
           </div>
@@ -747,6 +811,8 @@ export function AssistantChat() {
       </div>
     </aside>
   );
+
+  return isExpanded && mounted ? createPortal(panel, document.body) : panel;
 }
 
 function buildChatSnapshotUrl(sessionId?: string | null) {
@@ -866,21 +932,23 @@ function buildContextActions(context: ChatOpenContext): AssistantSuggestion[] {
 }
 
 function getChatContextTarget(target: EventTarget | null) {
-  if (!(target instanceof Element)) return null;
+  const element =
+    target instanceof Element
+      ? target
+      : target instanceof Node
+      ? target.parentElement
+      : null;
 
-  const interactive = target.closest<HTMLElement>(
-    "a,button,input,textarea,select,summary",
-  );
+  if (!element) return null;
 
-  if (
-    interactive &&
-    !interactive.matches("[data-chat-prompt],[data-chat-explain]")
-  ) {
-    return null;
-  }
+  const trigger = element.closest<HTMLElement>("[data-chat-open]");
 
-  return target.closest<HTMLElement>(
-    "[data-chat-prompt],[data-chat-explain]",
+  if (!trigger) return null;
+
+  return (
+    trigger.closest<HTMLElement>(
+      "[data-chat-prompt],[data-chat-explain]",
+    ) ?? null
   );
 }
 

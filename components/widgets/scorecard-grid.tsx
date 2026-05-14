@@ -1,5 +1,6 @@
 import type { ChatWidget } from "@/lib/chat/widgets";
 
+import { ChatOpenButton } from "@/components/chat-open-button";
 import { formatDelta, formatWidgetValue } from "@/components/widgets/format";
 
 type ScorecardGridProps = Extract<
@@ -19,6 +20,7 @@ export function ScorecardGridWidget({ title, cards }: ScorecardGridProps) {
         title ? `: ${title}` : ""
       } and tell me what matters most.`}
     >
+      <ChatOpenButton label={`Open ${title ?? "scorecard"} in chat`} />
       {title ? <div className="chat-widget-title">{title}</div> : null}
       <div className="chat-widget-scorecard-grid">
         {cards.map((card) => (

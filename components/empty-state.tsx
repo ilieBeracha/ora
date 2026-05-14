@@ -1,3 +1,5 @@
+import { ChatOpenButton } from "@/components/chat-open-button";
+
 export function EmptyState({
   title,
   body,
@@ -18,6 +20,7 @@ export function EmptyState({
       data-chat-description={body}
       data-chat-prompt={`Explain this empty state: ${title}. ${body}`}
     >
+      <ChatOpenButton label={`Open ${title} in chat`} />
       <div className="empty-index">{note}</div>
       <div>
         <h2 className="section-title">{title}</h2>

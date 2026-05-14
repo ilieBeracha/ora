@@ -56,6 +56,7 @@ export async function AppShell({
             <button
               className="command-search"
               aria-label="Open Signal assistant"
+              data-chat-open="true"
               data-chat-prevent-nav="true"
               data-chat-prompt="Give me a concise snapshot of the store ecosystem from connected systems."
               data-chat-source="topbar"

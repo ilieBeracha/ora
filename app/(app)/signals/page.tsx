@@ -1,5 +1,6 @@
 import Link from "next/link";
 
+import { ChatOpenButton } from "@/components/chat-open-button";
 import { EmptyState } from "@/components/empty-state";
 import { PageHeader } from "@/components/page-header";
 import { SeverityBadge, StatusBadge } from "@/components/status-badge";
@@ -58,11 +59,19 @@ export default async function SignalsPage({
       ) : (
         <div className="signal-list">
           {signals.map((signal) => (
-            <Link
-              className="panel panel-pad signal-card task-card signal-row block"
-              href={`/signals/${signal.id}`}
+            <article
+              className="panel panel-pad signal-card task-card signal-row"
+              data-chat-explain="true"
+              data-chat-source="signal-card"
+              data-chat-title={signal.title}
+              data-chat-description={signal.summary}
+              data-chat-signal-id={signal.id}
+              data-chat-object-type="signal"
+              data-chat-object-id={signal.id}
+              data-chat-prompt={`Explain this Signal: ${signal.title}. Why does it matter and what should I review first?`}
               key={signal.id}
             >
+              <ChatOpenButton label={`Open ${signal.title} in chat`} />
               <div className="task-primary">
                 <div className="task-copy">
                   <div className="mb-3 flex flex-wrap items-center gap-2">
@@ -76,22 +85,27 @@ export default async function SignalsPage({
                   </p>
                 </div>
 
-                <div className="fact-rail">
-                  <div className="fact-row">
-                    <span className="fact-label">Expected impact</span>
-                    <div>{formatMoneyFromCents(signal.impactEstimateCents)}</div>
+                <div className="signal-row-actions">
+                  <div className="fact-rail">
+                    <div className="fact-row">
+                      <span className="fact-label">Expected impact</span>
+                      <div>{formatMoneyFromCents(signal.impactEstimateCents)}</div>
+                    </div>
+                    <div className="fact-row">
+                      <span className="fact-label">Last detected</span>
+                      <div>{formatDate(signal.detectedAt)}</div>
+                    </div>
+                    <div className="fact-row">
+                      <span className="fact-label">Affected</span>
+                      <div>{signal.affectedObjectType.replaceAll("_", " ")}</div>
+                    </div>
                   </div>
-                  <div className="fact-row">
-                    <span className="fact-label">Last detected</span>
-                    <div>{formatDate(signal.detectedAt)}</div>
-                  </div>
-                  <div className="fact-row">
-                    <span className="fact-label">Affected</span>
-                    <div>{signal.affectedObjectType.replaceAll("_", " ")}</div>
-                  </div>
+                  <Link className="button" href={`/signals/${signal.id}`}>
+                    Open Signal
+                  </Link>
                 </div>
               </div>
-            </Link>
+            </article>
           ))}
         </div>
       )}

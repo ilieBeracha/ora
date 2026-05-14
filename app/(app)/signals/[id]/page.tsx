@@ -14,6 +14,7 @@ import {
 import { notFound } from "next/navigation";
 import type { ReactNode } from "react";
 
+import { ChatOpenButton } from "@/components/chat-open-button";
 import { PageHeader } from "@/components/page-header";
 import { RiskBadge, SeverityBadge, StatusBadge } from "@/components/status-badge";
 import { canManageApp, requireCurrentUser } from "@/lib/auth/session";
@@ -156,6 +157,7 @@ export default async function SignalDetailPage({
           data-chat-object-id={signal.id}
           data-chat-prompt={`Explain this Signal detail: ${signal.title}. Summarize what matters and what I should inspect next.`}
         >
+          <ChatOpenButton label="Open Signal summary in chat" />
           <div className="signal-hero-main">
             <div className="signal-hero-badges">
               <SeverityBadge severity={signal.severity} />
@@ -201,8 +203,20 @@ export default async function SignalDetailPage({
             return (
               <div
                 className={`signal-lifecycle-item signal-lifecycle-${item.state}`}
+                data-chat-explain="true"
+                data-chat-source="signal-lifecycle"
+                data-chat-title={item.label}
+                data-chat-description={item.detail}
+                data-chat-signal-id={signal.id}
+                data-chat-action-plan-id={actionPlan?.id}
+                data-chat-object-type="signal_lifecycle_step"
+                data-chat-object-id={`${signal.id}:${item.label
+                  .toLowerCase()
+                  .replaceAll(" ", "_")}`}
+                data-chat-prompt={`Explain the ${item.label} step for this Signal: ${signal.title}. Current state: ${item.detail}.`}
                 key={item.label}
               >
+                <ChatOpenButton label={`Open ${item.label} step in chat`} />
                 <span className="signal-lifecycle-icon">
                   <Icon size={16} aria-hidden="true" />
                 </span>
@@ -435,7 +449,21 @@ export default async function SignalDetailPage({
             ) : null}
 
             <div className="signal-work-grid">
-              <section className="signal-section-card">
+              <section
+                className="signal-section-card"
+                data-chat-explain="true"
+                data-chat-source="signal-section"
+                data-chat-title="Recommended action"
+                data-chat-description={
+                  recommendation?.reasoning ??
+                  "No recommendation is available for this Signal yet."
+                }
+                data-chat-signal-id={signal.id}
+                data-chat-action-plan-id={actionPlan?.id}
+                data-chat-object-type="recommendation"
+                data-chat-object-id={recommendation?.id ?? signal.id}
+                data-chat-prompt={`Explain the recommended action for this Signal: ${signal.title}.`}
+              >
                 <SectionHeader
                   icon={<Lightbulb size={18} aria-hidden="true" />}
                   label="Recommended action"
@@ -464,7 +492,22 @@ export default async function SignalDetailPage({
                 )}
               </section>
 
-              <section className="signal-section-card">
+              <section
+                className="signal-section-card"
+                data-chat-explain="true"
+                data-chat-source="signal-section"
+                data-chat-title="Action plan"
+                data-chat-description={
+                  actionPlan
+                    ? `Exact proposed action: ${titleCase(actionPlan.actionType)}.`
+                    : "No exact action plan has been prepared yet."
+                }
+                data-chat-signal-id={signal.id}
+                data-chat-action-plan-id={actionPlan?.id}
+                data-chat-object-type="action_plan"
+                data-chat-object-id={actionPlan?.id ?? signal.id}
+                data-chat-prompt={`Explain the action plan for this Signal: ${signal.title}. Include whether approval or execution is blocked.`}
+              >
                 <SectionHeader
                   icon={<FileCheck2 size={18} aria-hidden="true" />}
                   label="Action plan"
@@ -498,7 +541,18 @@ export default async function SignalDetailPage({
               </section>
             </div>
 
-            <section className="signal-section-card">
+            <section
+              className="signal-section-card"
+              data-chat-explain="true"
+              data-chat-source="signal-section"
+              data-chat-title="Approval, execution, outcome"
+              data-chat-description="The strict mutation path for this Signal."
+              data-chat-signal-id={signal.id}
+              data-chat-action-plan-id={actionPlan?.id}
+              data-chat-object-type="signal_mutation_path"
+              data-chat-object-id={actionPlan?.id ?? signal.id}
+              data-chat-prompt={`Explain the approval, execution, and outcome status for this Signal: ${signal.title}.`}
+            >
               <SectionHeader
                 icon={<ShieldCheck size={18} aria-hidden="true" />}
                 label="Approval, execution, outcome"
@@ -552,7 +606,24 @@ export default async function SignalDetailPage({
           </div>
 
           <aside className="signal-side-panel">
-            <section className="signal-next-action">
+            <section
+              className="signal-next-action"
+              data-chat-explain="true"
+              data-chat-source="signal-next-action"
+              data-chat-title="Next action"
+              data-chat-description={nextActionTitle(
+                Boolean(actionPlan),
+                Boolean(actionPlan?.approval),
+                Boolean(latestExecution),
+                canExecutePlan,
+              )}
+              data-chat-signal-id={signal.id}
+              data-chat-action-plan-id={actionPlan?.id}
+              data-chat-object-type="next_action"
+              data-chat-object-id={actionPlan?.id ?? signal.id}
+              data-chat-prompt={`Explain the next action for this Signal: ${signal.title}.`}
+            >
+              <ChatOpenButton label="Open next action in chat" />
               <div className="signal-next-icon">
                 <Gauge size={18} aria-hidden="true" />
               </div>
@@ -616,7 +687,21 @@ export default async function SignalDetailPage({
               ) : null}
             </section>
 
-            <section className="signal-facts-panel">
+            <section
+              className="signal-facts-panel"
+              data-chat-explain="true"
+              data-chat-source="signal-facts"
+              data-chat-title="Signal facts"
+              data-chat-description={`Type ${titleCase(signal.type)}, severity ${titleCase(
+                signal.severity,
+              )}, status ${titleCase(signal.status)}.`}
+              data-chat-signal-id={signal.id}
+              data-chat-action-plan-id={actionPlan?.id}
+              data-chat-object-type="signal_facts"
+              data-chat-object-id={signal.id}
+              data-chat-prompt={`Explain the facts and metadata for this Signal: ${signal.title}.`}
+            >
+              <ChatOpenButton label="Open Signal facts in chat" />
               <h2 className="section-title">Signal facts</h2>
               <dl>
                 <FactRow label="Type" value={titleCase(signal.type)} />
@@ -679,6 +764,7 @@ function SectionHeader({
         <p className="kicker">{label}</p>
         <h2>{title}</h2>
       </div>
+      <ChatOpenButton label={`Open ${label} in chat`} />
     </header>
   );
 }
@@ -713,7 +799,16 @@ function PathPanel({
   footnote?: string | null;
 }) {
   return (
-    <article className="signal-path-panel">
+    <article
+      className="signal-path-panel"
+      data-chat-explain="true"
+      data-chat-source="signal-path-panel"
+      data-chat-title={label}
+      data-chat-description={body}
+      data-chat-object-type="signal_path_step"
+      data-chat-prompt={`Explain this ${label} status: ${status}. ${body}`}
+    >
+      <ChatOpenButton label={`Open ${label} status in chat`} />
       <div>
         <p className="kicker">{label}</p>
         <StatusBadge status={status} />

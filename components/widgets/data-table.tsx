@@ -1,5 +1,6 @@
 import type { ChatWidget } from "@/lib/chat/widgets";
 
+import { ChatOpenButton } from "@/components/chat-open-button";
 import { formatWidgetValue } from "@/components/widgets/format";
 
 type DataTableProps = Extract<ChatWidget, { type: "data_table" }>["props"];
@@ -22,6 +23,7 @@ export function DataTableWidget({
         title ? `: ${title}` : ""
       } and call out the most important rows.`}
     >
+      <ChatOpenButton label={`Open ${title ?? "data table"} in chat`} />
       {title ? <div className="chat-widget-title">{title}</div> : null}
       <div className="chat-widget-table-scroll">
         <table>

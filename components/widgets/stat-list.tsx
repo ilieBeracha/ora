@@ -1,5 +1,6 @@
 import type { ChatWidget } from "@/lib/chat/widgets";
 
+import { ChatOpenButton } from "@/components/chat-open-button";
 import { formatWidgetValue } from "@/components/widgets/format";
 
 type StatListProps = Extract<ChatWidget, { type: "stat_list" }>["props"];
@@ -16,6 +17,7 @@ export function StatListWidget({ title, items }: StatListProps) {
         title ? `: ${title}` : ""
       } and identify the useful next question.`}
     >
+      <ChatOpenButton label={`Open ${title ?? "stats"} in chat`} />
       {title ? <div className="chat-widget-title">{title}</div> : null}
       <dl>
         {items.map((item) => (

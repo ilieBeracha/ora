@@ -2,6 +2,8 @@ import { AlertTriangle, CheckCircle2, Info, ShieldAlert } from "lucide-react";
 
 import type { ChatWidget } from "@/lib/chat/widgets";
 
+import { ChatOpenButton } from "@/components/chat-open-button";
+
 type AlertCardProps = Extract<ChatWidget, { type: "alert_card" }>["props"];
 
 const iconByTone = {
@@ -23,6 +25,7 @@ export function AlertCardWidget({ tone, title, body }: AlertCardProps) {
       data-chat-description={body}
       data-chat-prompt={`Explain this alert: ${title}.`}
     >
+      <ChatOpenButton label={`Open ${title} alert in chat`} />
       <Icon size={18} aria-hidden="true" />
       <div>
         <div className="chat-widget-alert-title">{title}</div>

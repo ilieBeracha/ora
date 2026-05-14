@@ -1,5 +1,6 @@
 import Link from "next/link";
 
+import { ChatOpenButton } from "@/components/chat-open-button";
 import { EmptyState } from "@/components/empty-state";
 import { PageHeader } from "@/components/page-header";
 import { StatusBadge } from "@/components/status-badge";
@@ -46,6 +47,7 @@ export default async function ActionsPage() {
                 data-chat-prompt={`Explain this action history item for "${action.signal.title}" and what its approval, execution, and outcome mean.`}
                 key={action.id}
               >
+                <ChatOpenButton label={`Open ${action.signal.title} action in chat`} />
                 <div className="task-primary">
                   <div className="task-copy">
                     <div className="mb-3 flex flex-wrap items-center gap-2">
