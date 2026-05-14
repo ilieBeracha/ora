@@ -16,7 +16,6 @@ import {
   MessageSquareText,
   Plus,
   Search,
-  Sparkles,
   X,
 } from "lucide-react";
 import { usePathname } from "next/navigation";
@@ -64,6 +63,7 @@ type ChatHistoryTurn = {
 };
 
 type ChatContextMode = "focused" | "clean" | "thread";
+type ChatViewMode = "direct" | "explore";
 
 type ChatOpenContext = {
   source?: string;
@@ -111,20 +111,23 @@ const initialMessages: AssistantMessage[] = [
   {
     id: "intro",
     role: "assistant",
-    body: "Ask about your connected store ecosystem. Chat only reads from approved connector tools.",
+    body: "Ask about your store data. Chat is read-only; approved actions still move through the Signal flow.",
   },
 ];
 
 export function AssistantChat() {
   const pathname = usePathname();
   const [messages, setMessages] = useState(initialMessages);
+  const [directMessages, setDirectMessages] = useState(initialMessages);
   const [input, setInput] = useState("");
   const [isOpen, setIsOpen] = useState(false);
   const [pending, setPending] = useState(false);
   const [pendingLabel, setPendingLabel] = useState("Reading connected tools");
   const [sessionId, setSessionId] = useState<string | null>(null);
+  const [directSessionId, setDirectSessionId] = useState<string | null>(null);
   const [sessions, setSessions] = useState<ChatSessionListItem[]>([]);
   const [contextMode, setContextMode] = useState<ChatContextMode>("focused");
+  const [chatViewMode, setChatViewMode] = useState<ChatViewMode>("explore");
   const [mounted, setMounted] = useState(false);
   const [activeContext, setActiveContext] = useState<ChatOpenContext | null>(
     null,
@@ -134,17 +137,26 @@ export function AssistantChat() {
   const threadRef = useRef<HTMLDivElement>(null);
   const pendingContextRef = useRef<ChatOpenContext | null>(null);
   const activeRunIdRef = useRef<string | null>(null);
+  const activeChatScopeRef = useRef<ChatViewMode>("explore");
   const streamAbortRef = useRef<AbortController | null>(null);
   const cancelledRef = useRef(false);
+  const isDirectMode = chatViewMode === "direct";
+  const activeMessages = isDirectMode ? directMessages : messages;
+  const pageContext = useMemo(() => buildPageContext(pathname), [pathname]);
   const suggestions = useMemo(
-    () => buildContextualSuggestions(messages),
-    [messages],
+    () =>
+      isDirectMode
+        ? buildDirectSuggestions(activeContext ?? pageContext)
+        : buildContextualSuggestions(messages),
+    [activeContext, isDirectMode, messages, pageContext],
   );
   const suggestionTitle = useMemo(
-    () => buildSuggestionTitle(messages),
-    [messages],
+    () =>
+      isDirectMode
+        ? "Ask next"
+        : buildSuggestionTitle(messages),
+    [isDirectMode, messages],
   );
-  const pageContext = useMemo(() => buildPageContext(pathname), [pathname]);
   const visibleContext = activeContext ?? pageContext;
   const contextActions = useMemo(
     () => buildContextActions(visibleContext),
@@ -172,11 +184,20 @@ export function AssistantChat() {
         event?.preventDefault();
       }
 
-      setActiveContext({
+      const context = {
         ...readChatContext(target),
         defaultPrompt: prompt,
-      });
+      };
+
+      setActiveContext(context);
       setIsOpen(true);
+      if (context.source === "topbar") {
+        setChatViewMode("explore");
+      } else {
+        setChatViewMode("direct");
+        setDirectSessionId(null);
+        setDirectMessages([buildDirectIntroMessage(context)]);
+      }
 
       return true;
     },
@@ -226,12 +247,7 @@ export function AssistantChat() {
     }
 
     function handlePointerDown(event: PointerEvent) {
-      const contextTarget = getChatContextTarget(event.target);
-
-      if (contextTarget) {
-        openChatFromContextTarget(contextTarget, event);
-        return;
-      }
+      if (getChatContextTarget(event.target)) return;
 
       setIsOpen(Boolean(targetIsInsidePanel(event.target)));
     }
@@ -255,27 +271,9 @@ export function AssistantChat() {
     function handleKeyDown(event: KeyboardEvent) {
       if (event.key === "Escape") {
         setIsOpen(false);
-        return;
-      }
-
-      if (event.key !== "Enter" && event.key !== " ") return;
-
-      const contextTarget = getChatContextTarget(event.target);
-      if (!contextTarget) return;
-
-      if (openChatFromContextTarget(contextTarget, event)) {
-        event.preventDefault();
       }
     }
 
-    document.addEventListener("keydown", handleKeyDown);
-
-    return () => {
-      document.removeEventListener("keydown", handleKeyDown);
-    };
-  }, [openChatFromContextTarget]);
-
-  useEffect(() => {
     function handleContextClick(event: globalThis.MouseEvent) {
       const target = getChatContextTarget(event.target);
       if (!target) return;
@@ -283,9 +281,11 @@ export function AssistantChat() {
       openChatFromContextTarget(target, event);
     }
 
+    document.addEventListener("keydown", handleKeyDown);
     document.addEventListener("click", handleContextClick);
 
     return () => {
+      document.removeEventListener("keydown", handleKeyDown);
       document.removeEventListener("click", handleContextClick);
     };
   }, [openChatFromContextTarget]);
@@ -295,7 +295,7 @@ export function AssistantChat() {
       top: threadRef.current.scrollHeight,
       behavior: "smooth",
     });
-  }, [messages, pending]);
+  }, [chatViewMode, directMessages, messages, pending]);
 
   function applySnapshot(snapshot: ChatSnapshot) {
     setSessionId(snapshot.sessionId);
@@ -326,16 +326,23 @@ export function AssistantChat() {
 
     pendingContextRef.current = null;
     setInput("");
-    setSessionId(null);
-    setMessages(initialMessages);
     setIsOpen(true);
-    window.localStorage.removeItem(chatSessionStorageKey);
+    if (isDirectMode) {
+      setDirectSessionId(null);
+      setDirectMessages([buildDirectIntroMessage(visibleContext)]);
+    } else {
+      setSessionId(null);
+      setMessages(initialMessages);
+      window.localStorage.removeItem(chatSessionStorageKey);
+    }
   }
 
   function selectSession(targetSessionId: string) {
     if (pending || targetSessionId === sessionId) return;
 
     setIsOpen(true);
+    setChatViewMode("explore");
+    setActiveContext(null);
     void loadSnapshot(targetSessionId);
   }
 
@@ -348,21 +355,37 @@ export function AssistantChat() {
     setIsOpen(false);
   }
 
+  function openExploreChat() {
+    if (pending) return;
+
+    setActiveContext(null);
+    setChatViewMode("explore");
+    setIsOpen(true);
+  }
+
   async function submitMessage(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
     const message = input.trim();
     if (!message || pending) return;
+    const runScope = chatViewMode;
+    const currentMessages =
+      runScope === "direct" ? directMessages : messages;
+    const currentSessionId =
+      runScope === "direct" ? directSessionId : sessionId;
+    const appendMessage =
+      runScope === "direct" ? setDirectMessages : setMessages;
 
     const userMessage: AssistantMessage = {
       id: crypto.randomUUID(),
       role: "user",
       body: message,
     };
-    const history = buildConversationHistory(messages);
+    const history = buildConversationHistory(currentMessages);
     const context = pendingContextRef.current ?? activeContext ?? pageContext;
 
-    setMessages((current) => [...current, userMessage]);
+    activeChatScopeRef.current = runScope;
+    appendMessage((current) => [...current, userMessage]);
     setInput("");
     setPending(true);
     setPendingLabel("Starting");
@@ -381,8 +404,8 @@ export function AssistantChat() {
         body: JSON.stringify({
           message,
           history,
-          sessionId,
-          contextMode,
+          sessionId: currentSessionId,
+          contextMode: runScope === "direct" ? "clean" : contextMode,
           context,
         }),
         signal: abortController.signal,
@@ -406,7 +429,7 @@ export function AssistantChat() {
         return;
       }
 
-      setMessages((current) => [
+      appendMessage((current) => [
         ...current,
         {
           id: crypto.randomUUID(),
@@ -443,7 +466,10 @@ export function AssistantChat() {
     activeRunIdRef.current = null;
     streamAbortRef.current = null;
 
-    setMessages((current) => [
+    const appendMessage =
+      activeChatScopeRef.current === "direct" ? setDirectMessages : setMessages;
+
+    appendMessage((current) => [
       ...current,
       {
         id: crypto.randomUUID(),
@@ -480,8 +506,12 @@ export function AssistantChat() {
       isRecord(data) &&
       typeof data.sessionId === "string"
     ) {
-      setSessionId(data.sessionId);
-      window.localStorage.setItem(chatSessionStorageKey, data.sessionId);
+      if (activeChatScopeRef.current === "direct") {
+        setDirectSessionId(data.sessionId);
+      } else {
+        setSessionId(data.sessionId);
+        window.localStorage.setItem(chatSessionStorageKey, data.sessionId);
+      }
       return;
     }
 
@@ -517,8 +547,12 @@ export function AssistantChat() {
       !cancelledRef.current
     ) {
       const message = data.message;
+      const appendMessage =
+        activeChatScopeRef.current === "direct"
+          ? setDirectMessages
+          : setMessages;
 
-      setMessages((current) => [
+      appendMessage((current) => [
         ...current,
         {
           id: crypto.randomUUID(),
@@ -539,14 +573,24 @@ export function AssistantChat() {
   }
 
   function addAssistantResponse(data: ChatResponse) {
-    setSessionId(data.sessionId);
+    const appendMessage =
+      activeChatScopeRef.current === "direct" ? setDirectMessages : setMessages;
+
+    if (activeChatScopeRef.current === "direct") {
+      setDirectSessionId(data.sessionId);
+    } else {
+      setSessionId(data.sessionId);
+    }
+
+    if (data.sessionId && activeChatScopeRef.current === "explore") {
+      window.localStorage.setItem(chatSessionStorageKey, data.sessionId);
+    }
 
     if (data.sessionId) {
-      window.localStorage.setItem(chatSessionStorageKey, data.sessionId);
       void refreshSessionList(data.sessionId);
     }
 
-    setMessages((current) => [
+    appendMessage((current) => [
       ...current,
       {
         id: crypto.randomUUID(),
@@ -559,12 +603,25 @@ export function AssistantChat() {
   }
 
   const isExpanded = isOpen;
-  const showSuggestionCard = !latestAssistantHasFollowups(messages);
+  const showSuggestionCard = !latestAssistantHasFollowups(activeMessages);
+  const panelClassName = [
+    "assistant-panel",
+    isExpanded ? "assistant-panel-active" : "",
+    isDirectMode ? "assistant-panel-direct" : "assistant-panel-explore",
+  ]
+    .filter(Boolean)
+    .join(" ");
+  const panelTitle = isDirectMode ? "Focused chat" : "Store chat";
+  const inputPlaceholder = pending
+    ? "Reading connected data..."
+    : isDirectMode
+    ? "Ask about this selection"
+    : "Ask about your store";
 
   const panel = (
     <aside
       aria-label="Signal assistant"
-      className={`assistant-panel${isExpanded ? " assistant-panel-active" : ""}`}
+      className={panelClassName}
       onClickCapture={() => setIsOpen(true)}
       onFocusCapture={() => setIsOpen(true)}
       onPointerDownCapture={() => setIsOpen(true)}
@@ -575,6 +632,7 @@ export function AssistantChat() {
         <button
           aria-label="Open chat"
           className="assistant-open-surface"
+          onClick={openExploreChat}
           type="button"
         />
       ) : null}
@@ -585,38 +643,42 @@ export function AssistantChat() {
             <div className="assistant-panel-heading">
               <div className="assistant-panel-title">
                 <MessageSquareText size={17} aria-hidden="true" />
-                Chat
+                {panelTitle}
               </div>
               <span title={visibleContext.description}>
                 {visibleContext.title}
               </span>
             </div>
             <div className="assistant-panel-actions">
-              <label className="assistant-memory-control">
-                <span>Memory</span>
-                <select
-                  aria-label="Chat memory"
-                  disabled={pending}
-                  onChange={(event) =>
-                    changeContextMode(event.target.value as ChatContextMode)
-                  }
-                  value={contextMode}
-                >
-                  {contextModeOptions.map((option) => (
-                    <option key={option.value} value={option.value}>
-                      {option.label}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <button
-                aria-label="Start a new chat"
-                disabled={pending}
-                onClick={startNewChat}
-                type="button"
-              >
-                <Plus size={16} aria-hidden="true" />
-              </button>
+              {!isDirectMode ? (
+                <>
+                  <label className="assistant-memory-control">
+                    <span>Context</span>
+                    <select
+                      aria-label="Chat context"
+                      disabled={pending}
+                      onChange={(event) =>
+                        changeContextMode(event.target.value as ChatContextMode)
+                      }
+                      value={contextMode}
+                    >
+                      {contextModeOptions.map((option) => (
+                        <option key={option.value} value={option.value}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <button
+                    aria-label="Start a new chat"
+                    disabled={pending}
+                    onClick={startNewChat}
+                    type="button"
+                  >
+                    <Plus size={16} aria-hidden="true" />
+                  </button>
+                </>
+              ) : null}
               <button
                 aria-label="Close chat"
                 onClick={closeChat}
@@ -627,36 +689,46 @@ export function AssistantChat() {
             </div>
           </div>
 
-          <div className="assistant-context-bar">
+          <div
+            className={`assistant-context-bar${
+              isDirectMode ? " assistant-context-bar-direct" : ""
+            }`}
+          >
             <span>{activeContext ? "Selected" : "Page"}</span>
-            <strong>{visibleContext.title}</strong>
-            <div>
-              {contextActions.map((action) => (
-                <button
-                  disabled={pending}
-                  key={action.label}
-                  onClick={(event) => handleContextAction(action.prompt, event)}
-                  type="button"
-                >
-                  {action.label}
-                </button>
-              ))}
-              {activeContext ? (
-                <button
-                  disabled={pending}
-                  onClick={() => setActiveContext(null)}
-                  type="button"
-                >
-                  Clear
-                </button>
-              ) : null}
-            </div>
+            <strong title={visibleContext.description}>
+              {visibleContext.title}
+            </strong>
+            {!isDirectMode ? (
+              <div>
+                {contextActions.map((action) => (
+                  <button
+                    disabled={pending}
+                    key={action.label}
+                    onClick={(event) =>
+                      handleContextAction(action.prompt, event)
+                    }
+                    type="button"
+                  >
+                    {action.label}
+                  </button>
+                ))}
+                {activeContext ? (
+                  <button
+                    disabled={pending}
+                    onClick={() => setActiveContext(null)}
+                    type="button"
+                  >
+                    Clear
+                  </button>
+                ) : null}
+              </div>
+            ) : null}
           </div>
         </>
       ) : null}
 
       <div className="assistant-body">
-        {isExpanded ? (
+        {isExpanded && !isDirectMode ? (
           <nav className="assistant-history" aria-label="Chat history">
             <div className="assistant-history-heading">
               <History size={16} aria-hidden="true" />
@@ -705,7 +777,7 @@ export function AssistantChat() {
 
         <div className="assistant-conversation">
           <div className="assistant-thread" aria-live="polite" ref={threadRef}>
-            {messages.map((message) =>
+            {activeMessages.map((message) =>
               message.role === "user" ? (
                 <div className="assistant-message-user" key={message.id}>
                   <div className="assistant-name">You</div>
@@ -740,7 +812,7 @@ export function AssistantChat() {
 
             {showSuggestionCard ? (
               <div className="assistant-card">
-                <Sparkles size={18} aria-hidden="true" />
+                <MessageSquareText size={18} aria-hidden="true" />
                 <div>
                   <div className="assistant-name">{suggestionTitle}</div>
                   <div className="assistant-suggestions">
@@ -783,14 +855,14 @@ export function AssistantChat() {
             ref={formRef}
           >
             <input
-              aria-label="Ask about connected data"
+              aria-label={
+                isDirectMode
+                  ? "Ask about this selection"
+                  : "Ask about connected data"
+              }
               disabled={pending}
               onChange={(event) => setInput(event.target.value)}
-              placeholder={
-                pending
-                  ? "Reading connected data..."
-                  : "Ask about your store ecosystem"
-              }
+              placeholder={inputPlaceholder}
               value={input}
             />
             <button
@@ -925,8 +997,39 @@ function buildContextActions(context: ChatOpenContext): AssistantSuggestion[] {
       prompt: `What should I review next for ${title}? Keep it focused and practical.`,
     },
     {
-      label: "Data behind it",
+      label: "Data",
       prompt: `What connected data should I inspect to validate ${title}?`,
+    },
+  ];
+}
+
+function buildDirectIntroMessage(context: ChatOpenContext): AssistantMessage {
+  const title = context.title ?? "this item";
+
+  return {
+    id: `direct-${crypto.randomUUID()}`,
+    role: "assistant",
+    body: `Scoped to ${title}. Ask for the explanation, the evidence, or the next safe step.`,
+  };
+}
+
+function buildDirectSuggestions(context: ChatOpenContext): AssistantSuggestion[] {
+  const title = context.title ?? "this item";
+
+  return [
+    {
+      label: "Explain",
+      prompt:
+        context.defaultPrompt ??
+        `Explain ${title} in operator terms and keep it practical.`,
+    },
+    {
+      label: "Show data",
+      prompt: `Show the connected data behind ${title}. Keep only the facts needed to validate it.`,
+    },
+    {
+      label: "Next step",
+      prompt: `What is the next safe step for ${title}? Include approval or execution constraints if relevant.`,
     },
   ];
 }

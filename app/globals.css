@@ -624,6 +624,14 @@ button {
   transform: none;
 }
 
+.assistant-panel-active.assistant-panel-direct {
+  width: min(780px, calc(100vw - 126px));
+}
+
+.assistant-panel-active.assistant-panel-explore {
+  width: min(960px, calc(100vw - 126px));
+}
+
 .assistant-handle {
   width: 22px;
   height: 3px;
@@ -765,6 +773,10 @@ button {
   gap: 14px;
 }
 
+.assistant-panel-active.assistant-panel-direct .assistant-body {
+  grid-template-columns: minmax(0, 1fr);
+}
+
 .assistant-history {
   display: none;
 }
@@ -881,6 +893,14 @@ button {
   padding: 5px;
 }
 
+.assistant-context-bar-direct {
+  grid-template-columns: auto minmax(0, 1fr);
+  min-height: 42px;
+  margin-bottom: 14px;
+  background: #ffffff;
+  padding: 7px 8px;
+}
+
 .assistant-context-bar span {
   flex: 0 0 auto;
   background: var(--panel-subtle);
@@ -902,6 +922,10 @@ button {
   font-weight: 850;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.assistant-context-bar-direct strong {
+  font-size: 12px;
 }
 
 .assistant-context-bar > div {
@@ -938,12 +962,6 @@ button {
   overscroll-behavior: contain;
   padding: 2px 6px 2px 2px;
   scrollbar-gutter: stable;
-}
-
-.assistant-thread::before {
-  content: "";
-  flex: 0 0 auto;
-  margin-top: auto;
 }
 
 .assistant-thread::-webkit-scrollbar {
@@ -2684,6 +2702,11 @@ button {
     left: 12px;
     width: auto;
     max-width: none;
+  }
+
+  .assistant-panel-active.assistant-panel-direct,
+  .assistant-panel-active.assistant-panel-explore {
+    width: auto;
   }
 }
 
