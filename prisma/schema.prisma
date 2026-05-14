@@ -1,0 +1,404 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../lib/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  owner
+  admin
+  member
+}
+
+enum UserStatus {
+  active
+  invited
+  suspended
+}
+
+enum InvitationStatus {
+  pending
+  accepted
+  revoked
+  expired
+}
+
+enum ShopifyConnectionStatus {
+  connected
+  disconnected
+  error
+}
+
+enum ShopifyAuthMethod {
+  api_key
+  oauth
+}
+
+enum ConnectorProvider {
+  shopify
+  klaviyo
+  meta
+  google_analytics
+  google_search_console
+}
+
+enum ConnectorStatus {
+  disconnected
+  connected
+  error
+}
+
+enum ChatMessageRole {
+  user
+  assistant
+}
+
+enum SignalStatus {
+  open
+  monitoring
+  resolved
+  ignored
+}
+
+enum SignalSeverity {
+  low
+  medium
+  high
+  critical
+}
+
+enum SignalCategory {
+  product
+  inventory
+  merchandising
+  customer
+  catalog
+}
+
+enum AffectedObjectType {
+  product
+  customer_segment
+  collection
+  store
+}
+
+enum EvidenceProvider {
+  shopify
+  system
+}
+
+enum RiskLevel {
+  low
+  medium
+  high
+}
+
+enum ActionProvider {
+  shopify
+}
+
+enum ActionPlanStatus {
+  draft
+  approval_required
+  approved
+  executed
+  failed
+}
+
+enum ExecutionStatus {
+  pending
+  success
+  failed
+}
+
+enum OutcomeStatus {
+  pending
+  improving
+  no_change
+  worsened
+  resolved
+}
+
+model User {
+  id               String     @id @default(uuid())
+  workosUserId     String     @unique
+  email            String     @unique
+  firstName        String?
+  lastName         String?
+  role             UserRole
+  status           UserStatus @default(active)
+  companyId        String?
+  company          Company?   @relation("CompanyUsers", fields: [companyId], references: [id], onDelete: SetNull)
+  companyAdminOf   Company?   @relation("CompanyAdmin")
+  invitedByUserId  String?
+  invitedBy        User?      @relation("UserInvitations", fields: [invitedByUserId], references: [id], onDelete: SetNull)
+  invitedUsers     User[]     @relation("UserInvitations")
+  createdAt        DateTime   @default(now())
+  updatedAt        DateTime   @updatedAt
+
+  invitationsSent  Invitation[] @relation("InvitationInviter")
+  approvals        Approval[]
+  chatSessions     ChatSession[]
+
+  @@index([companyId])
+}
+
+model Company {
+  id                   String                @id @default(uuid())
+  name                 String
+  adminUserId          String                @unique
+  adminUser            User                  @relation("CompanyAdmin", fields: [adminUserId], references: [id], onDelete: Restrict)
+  users                User[]                @relation("CompanyUsers")
+  invitations          Invitation[]
+  shopifyConnections   ShopifyConnection[]
+  connectorConnections ConnectorConnection[]
+  chatSessions         ChatSession[]
+  signals              Signal[]
+  createdAt            DateTime              @default(now())
+  updatedAt            DateTime              @updatedAt
+}
+
+model ChatSession {
+  id        String        @id @default(uuid())
+  companyId String
+  company   Company       @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title     String?
+  createdAt DateTime      @default(now())
+  updatedAt DateTime      @updatedAt
+
+  messages  ChatMessage[]
+
+  @@index([companyId, updatedAt])
+  @@index([userId, updatedAt])
+}
+
+model ChatMessage {
+  id         String          @id @default(uuid())
+  sessionId  String
+  session    ChatSession     @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  role       ChatMessageRole
+  body       String          @db.Text
+  toolName   String?
+  toolsJson  Json?
+  widgetsJson Json?
+  createdAt  DateTime        @default(now())
+
+  @@index([sessionId, createdAt])
+}
+
+model Invitation {
+  id                 String           @id @default(uuid())
+  email              String
+  companyId          String?
+  company            Company?         @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  invitedByUserId    String?
+  invitedBy          User?            @relation("InvitationInviter", fields: [invitedByUserId], references: [id], onDelete: SetNull)
+  status             InvitationStatus @default(pending)
+  workosInvitationId String?          @unique
+  token              String?
+  createdAt          DateTime         @default(now())
+  acceptedAt         DateTime?
+  expiresAt          DateTime?
+
+  @@index([email])
+  @@index([companyId])
+  @@index([status])
+}
+
+model ShopifyConnection {
+  id                  String                  @id @default(uuid())
+  companyId           String
+  company             Company                 @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  shopDomain          String
+  shopName            String?
+  email               String?
+  status              ShopifyConnectionStatus @default(connected)
+  authMethod          ShopifyAuthMethod       @default(api_key)
+  scopes              String[]
+  encryptedAccessToken String?
+  accessTokenDigest   String?
+  apiClientId         String?
+  encryptedApiClientSecret String?
+  apiVersion          String                  @default("2026-04")
+  shopInfoJson        Json?
+  lastSyncAt          DateTime?
+  lastSyncStatus      String?
+  lastSyncError       String?
+  lastSignalDetectionAt DateTime?
+  lastSignalDetectionStatus String?
+  lastSignalDetectionError String?
+  lastSignalDetectionSignalCount Int?
+  lastSignalDetectionSummary String?
+  connectedByUserId   String?
+  connectedAt         DateTime                @default(now())
+  updatedAt           DateTime                @updatedAt
+
+  products            ProductMirror[]
+
+  @@unique([companyId, shopDomain])
+  @@index([companyId, status])
+}
+
+model ConnectorConnection {
+  id            String            @id @default(uuid())
+  companyId     String
+  company       Company           @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  provider      ConnectorProvider
+  status        ConnectorStatus   @default(disconnected)
+  configEnc     String?           @db.Text
+  lastError     String?           @db.Text
+  lastCheckedAt DateTime?
+  createdAt     DateTime          @default(now())
+  updatedAt     DateTime          @updatedAt
+
+  @@unique([companyId, provider])
+  @@index([companyId])
+  @@index([status])
+  @@index([lastCheckedAt])
+}
+
+model ProductMirror {
+  id                String   @id @default(uuid())
+  shopifyConnectionId String
+  connection        ShopifyConnection @relation(fields: [shopifyConnectionId], references: [id], onDelete: Cascade)
+  shopifyProductId  String
+  handle            String
+  title             String
+  status            String
+  vendor            String?
+  productType       String?
+  tags              String[]
+  totalInventory    Int?
+  imageUrl          String?
+  descriptionPlain  String?
+  metafieldsJson    Json?
+  rawJson           Json?
+  shopifyUpdatedAt  DateTime?
+  mirroredAt        DateTime @default(now()) @updatedAt
+
+  @@unique([shopifyConnectionId, shopifyProductId])
+  @@index([status])
+  @@index([productType])
+  @@index([vendor])
+  @@index([mirroredAt])
+}
+
+model Signal {
+  id                 String             @id @default(uuid())
+  companyId          String
+  company            Company            @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  type               String
+  title              String
+  summary            String             @db.Text
+  status             SignalStatus       @default(open)
+  severity           SignalSeverity
+  category           SignalCategory
+  affectedObjectType AffectedObjectType
+  affectedObjectId   String?
+  impactEstimateCents Int?
+  confidence         Float
+  detectedAt         DateTime           @default(now())
+  updatedAt          DateTime           @updatedAt
+
+  evidence           SignalEvidence[]
+  recommendations    Recommendation[]
+  actionPlans        ActionPlan[]
+  outcomes           Outcome[]
+
+  @@unique([companyId, type, affectedObjectType, affectedObjectId])
+  @@index([companyId, status, severity])
+  @@index([detectedAt])
+}
+
+model SignalEvidence {
+  id           String           @id @default(uuid())
+  signalId     String
+  signal       Signal           @relation(fields: [signalId], references: [id], onDelete: Cascade)
+  provider     EvidenceProvider
+  evidenceType String
+  displayText  String           @db.Text
+  rawPayload   Json?
+  observedAt   DateTime         @default(now())
+
+  @@index([signalId])
+}
+
+model Recommendation {
+  id             String    @id @default(uuid())
+  signalId       String
+  signal         Signal    @relation(fields: [signalId], references: [id], onDelete: Cascade)
+  title          String
+  reasoning      String    @db.Text
+  expectedImpact String?
+  riskLevel      RiskLevel
+  confidence     Float
+
+  actionPlans    ActionPlan[]
+}
+
+model ActionPlan {
+  id                String           @id @default(uuid())
+  signalId          String
+  signal            Signal           @relation(fields: [signalId], references: [id], onDelete: Cascade)
+  recommendationId  String?
+  recommendation    Recommendation?  @relation(fields: [recommendationId], references: [id], onDelete: SetNull)
+  actionType        String
+  provider          ActionProvider
+  status            ActionPlanStatus  @default(draft)
+  previewPayload    Json
+  executionPayload  Json
+  createdAt         DateTime          @default(now())
+  updatedAt         DateTime          @updatedAt
+
+  approval          Approval?
+  executions        Execution[]
+  outcomes          Outcome[]
+}
+
+model Approval {
+  id                  String     @id @default(uuid())
+  actionPlanId        String     @unique
+  actionPlan          ActionPlan @relation(fields: [actionPlanId], references: [id], onDelete: Cascade)
+  approvedByUserId    String
+  approvedBy          User       @relation(fields: [approvedByUserId], references: [id], onDelete: Restrict)
+  approvedAt          DateTime   @default(now())
+  approvalPayloadHash String
+  approvalText        String
+}
+
+model Execution {
+  id             String          @id @default(uuid())
+  actionPlanId   String
+  actionPlan     ActionPlan      @relation(fields: [actionPlanId], references: [id], onDelete: Cascade)
+  provider       String
+  toolName       String
+  inputPayload   Json
+  outputPayload  Json?
+  status         ExecutionStatus @default(pending)
+  errorMessage   String?         @db.Text
+  executedAt     DateTime        @default(now())
+
+  @@index([status])
+  @@index([executedAt])
+}
+
+model Outcome {
+  id            String        @id @default(uuid())
+  signalId      String
+  signal        Signal        @relation(fields: [signalId], references: [id], onDelete: Cascade)
+  actionPlanId  String?
+  actionPlan    ActionPlan?   @relation(fields: [actionPlanId], references: [id], onDelete: SetNull)
+  status        OutcomeStatus @default(pending)
+  measuredAt    DateTime      @default(now())
+  metricsJson   Json?
+  summary       String        @db.Text
+
+  @@index([status])
+  @@index([measuredAt])
+}
