@@ -12,7 +12,16 @@ export function DataTableWidget({
   currency,
 }: DataTableProps) {
   return (
-    <section className="chat-widget chat-widget-data-table">
+    <section
+      className="chat-widget chat-widget-data-table"
+      data-chat-explain="true"
+      data-chat-source="chat-widget"
+      data-chat-title={title ?? "Data table"}
+      data-chat-description={`${rows.length} rows and ${columns.length} columns shown in this chat widget.`}
+      data-chat-prompt={`Explain this data table${
+        title ? `: ${title}` : ""
+      } and call out the most important rows.`}
+    >
       {title ? <div className="chat-widget-title">{title}</div> : null}
       <div className="chat-widget-table-scroll">
         <table>

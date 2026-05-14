@@ -1,13 +1,24 @@
 "use client";
 
-import { FormEvent, MouseEvent, useEffect, useMemo, useRef, useState } from "react";
 import {
+  FormEvent,
+  MouseEvent,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+import {
+  History,
   LoaderCircle,
   MessageSquareText,
+  Plus,
   Search,
   Sparkles,
   X,
 } from "lucide-react";
+import { usePathname } from "next/navigation";
 
 import { WidgetList } from "@/components/widgets/widget-renderer";
 import type { ChatWidget } from "@/lib/chat/widgets";
@@ -34,11 +45,35 @@ type ChatResponse = {
 type ChatSnapshot = {
   sessionId: string | null;
   messages: Array<AssistantMessage & { createdAt?: string }>;
+  sessions?: ChatSessionListItem[];
+};
+
+type ChatSessionListItem = {
+  id: string;
+  title: string;
+  preview: string;
+  messageCount: number;
+  createdAt: string;
+  updatedAt: string;
 };
 
 type ChatHistoryTurn = {
   role: "assistant" | "user";
   content: string;
+};
+
+type ChatContextMode = "focused" | "clean" | "thread";
+
+type ChatOpenContext = {
+  source?: string;
+  title?: string;
+  description?: string;
+  defaultPrompt?: string;
+  href?: string;
+  signalId?: string;
+  actionPlanId?: string;
+  objectType?: string;
+  objectId?: string;
 };
 
 type AssistantSuggestion = {
@@ -47,6 +82,29 @@ type AssistantSuggestion = {
 };
 
 const chatSessionStorageKey = "ora-chat-session-id";
+const chatContextModeStorageKey = "ora-chat-context-mode";
+
+const contextModeOptions: Array<{
+  value: ChatContextMode;
+  label: string;
+  description: string;
+}> = [
+  {
+    value: "focused",
+    label: "Recent chat",
+    description: "Uses the current page and the last few messages.",
+  },
+  {
+    value: "clean",
+    label: "No history",
+    description: "Uses the current page without earlier chat messages.",
+  },
+  {
+    value: "thread",
+    label: "Full chat",
+    description: "Uses more of this chat session for follow-up questions.",
+  },
+];
 
 const initialMessages: AssistantMessage[] = [
   {
@@ -57,15 +115,22 @@ const initialMessages: AssistantMessage[] = [
 ];
 
 export function AssistantChat() {
+  const pathname = usePathname();
   const [messages, setMessages] = useState(initialMessages);
   const [input, setInput] = useState("");
   const [isOpen, setIsOpen] = useState(false);
   const [pending, setPending] = useState(false);
   const [pendingLabel, setPendingLabel] = useState("Reading connected tools");
   const [sessionId, setSessionId] = useState<string | null>(null);
+  const [sessions, setSessions] = useState<ChatSessionListItem[]>([]);
+  const [contextMode, setContextMode] = useState<ChatContextMode>("focused");
+  const [activeContext, setActiveContext] = useState<ChatOpenContext | null>(
+    null,
+  );
   const panelRef = useRef<HTMLElement>(null);
   const formRef = useRef<HTMLFormElement>(null);
   const threadRef = useRef<HTMLDivElement>(null);
+  const pendingContextRef = useRef<ChatOpenContext | null>(null);
   const activeRunIdRef = useRef<string | null>(null);
   const streamAbortRef = useRef<AbortController | null>(null);
   const cancelledRef = useRef(false);
@@ -77,30 +142,41 @@ export function AssistantChat() {
     () => buildSuggestionTitle(messages),
     [messages],
   );
+  const pageContext = useMemo(() => buildPageContext(pathname), [pathname]);
+  const visibleContext = activeContext ?? pageContext;
+  const contextActions = useMemo(
+    () => buildContextActions(visibleContext),
+    [visibleContext],
+  );
+  const submitPrompt = useCallback(
+    (prompt: string, context?: ChatOpenContext | null) => {
+      if (pending) return;
+
+      pendingContextRef.current = context ?? null;
+      setIsOpen(true);
+      setInput(prompt);
+      requestAnimationFrame(() => formRef.current?.requestSubmit());
+    },
+    [pending],
+  );
 
   useEffect(() => {
     let ignore = false;
     const storedSessionId = window.localStorage.getItem(chatSessionStorageKey);
-    const url = storedSessionId
-      ? `/api/chat?sessionId=${encodeURIComponent(storedSessionId)}`
-      : "/api/chat";
+    const storedContextMode = window.localStorage.getItem(
+      chatContextModeStorageKey,
+    );
 
-    fetch(url)
+    if (isContextMode(storedContextMode)) {
+      setContextMode(storedContextMode);
+    }
+
+    fetch(buildChatSnapshotUrl(storedSessionId))
       .then((response) => response.json() as Promise<ChatSnapshot>)
       .then((snapshot) => {
         if (ignore) return;
 
-        setSessionId(snapshot.sessionId);
-
-        if (snapshot.sessionId) {
-          window.localStorage.setItem(chatSessionStorageKey, snapshot.sessionId);
-        } else {
-          window.localStorage.removeItem(chatSessionStorageKey);
-        }
-
-        if (snapshot.messages.length > 0) {
-          setMessages(snapshot.messages);
-        }
+        applySnapshot(snapshot);
       })
       .catch(() => {
         if (!ignore) {
@@ -114,15 +190,23 @@ export function AssistantChat() {
   }, []);
 
   useEffect(() => {
+    setActiveContext(null);
+  }, [pathname]);
+
+  useEffect(() => {
     function targetIsInsidePanel(target: EventTarget | null) {
       return target instanceof Node && panelRef.current?.contains(target);
     }
 
     function handlePointerDown(event: PointerEvent) {
+      if (getChatContextTarget(event.target)) return;
+
       setIsOpen(Boolean(targetIsInsidePanel(event.target)));
     }
 
     function handleFocusIn(event: FocusEvent) {
+      if (getChatContextTarget(event.target)) return;
+
       setIsOpen(Boolean(targetIsInsidePanel(event.target)));
     }
 
@@ -136,11 +220,84 @@ export function AssistantChat() {
   }, []);
 
   useEffect(() => {
+    function handleContextClick(event: globalThis.MouseEvent) {
+      const target = getChatContextTarget(event.target);
+      if (!target || panelRef.current?.contains(target) || pending) return;
+
+      const prompt = getChatContextPrompt(target);
+      if (!prompt) return;
+
+      if (target.dataset.chatPreventNav === "true") {
+        event.preventDefault();
+      }
+
+      setActiveContext({
+        ...readChatContext(target),
+        defaultPrompt: prompt,
+      });
+      setIsOpen(true);
+    }
+
+    document.addEventListener("click", handleContextClick);
+
+    return () => {
+      document.removeEventListener("click", handleContextClick);
+    };
+  }, [pending]);
+
+  useEffect(() => {
     threadRef.current?.scrollTo({
       top: threadRef.current.scrollHeight,
       behavior: "smooth",
     });
   }, [messages, pending]);
+
+  function applySnapshot(snapshot: ChatSnapshot) {
+    setSessionId(snapshot.sessionId);
+    setSessions(snapshot.sessions ?? []);
+
+    if (snapshot.sessionId) {
+      window.localStorage.setItem(chatSessionStorageKey, snapshot.sessionId);
+    } else {
+      window.localStorage.removeItem(chatSessionStorageKey);
+    }
+
+    setMessages(snapshot.messages.length > 0 ? snapshot.messages : initialMessages);
+  }
+
+  async function loadSnapshot(targetSessionId?: string | null) {
+    const response = await fetch(buildChatSnapshotUrl(targetSessionId));
+    applySnapshot((await response.json()) as ChatSnapshot);
+  }
+
+  async function refreshSessionList(targetSessionId = sessionId) {
+    const response = await fetch(buildChatSnapshotUrl(targetSessionId));
+    const snapshot = (await response.json()) as ChatSnapshot;
+    setSessions(snapshot.sessions ?? []);
+  }
+
+  function startNewChat() {
+    if (pending) return;
+
+    pendingContextRef.current = null;
+    setInput("");
+    setSessionId(null);
+    setMessages(initialMessages);
+    setIsOpen(true);
+    window.localStorage.removeItem(chatSessionStorageKey);
+  }
+
+  function selectSession(targetSessionId: string) {
+    if (pending || targetSessionId === sessionId) return;
+
+    setIsOpen(true);
+    void loadSnapshot(targetSessionId);
+  }
+
+  function changeContextMode(nextMode: ChatContextMode) {
+    setContextMode(nextMode);
+    window.localStorage.setItem(chatContextModeStorageKey, nextMode);
+  }
 
   async function submitMessage(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -154,6 +311,7 @@ export function AssistantChat() {
       body: message,
     };
     const history = buildConversationHistory(messages);
+    const context = pendingContextRef.current ?? activeContext ?? pageContext;
 
     setMessages((current) => [...current, userMessage]);
     setInput("");
@@ -171,7 +329,13 @@ export function AssistantChat() {
           Accept: "text/event-stream",
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ message, history, sessionId }),
+        body: JSON.stringify({
+          message,
+          history,
+          sessionId,
+          contextMode,
+          context,
+        }),
         signal: abortController.signal,
       });
       const contentType = response.headers.get("content-type") ?? "";
@@ -207,6 +371,7 @@ export function AssistantChat() {
     } finally {
       setPending(false);
       setPendingLabel("Reading connected tools");
+      pendingContextRef.current = null;
       activeRunIdRef.current = null;
       streamAbortRef.current = null;
     }
@@ -244,9 +409,15 @@ export function AssistantChat() {
     event?: MouseEvent<HTMLButtonElement>,
   ) {
     event?.currentTarget.blur();
-    setIsOpen(true);
-    setInput(message);
-    requestAnimationFrame(() => formRef.current?.requestSubmit());
+    submitPrompt(message);
+  }
+
+  function handleContextAction(
+    prompt: string,
+    event?: MouseEvent<HTMLButtonElement>,
+  ) {
+    event?.currentTarget.blur();
+    submitPrompt(prompt, visibleContext);
   }
 
   function handleChatStreamEvent(event: string, data: unknown) {
@@ -323,6 +494,7 @@ export function AssistantChat() {
 
     if (data.sessionId) {
       window.localStorage.setItem(chatSessionStorageKey, data.sessionId);
+      void refreshSessionList(data.sessionId);
     }
 
     setMessages((current) => [
@@ -337,113 +509,522 @@ export function AssistantChat() {
     ]);
   }
 
+  const isExpanded = isOpen || pending;
+  const showSuggestionCard = !latestAssistantHasFollowups(messages);
+
   return (
     <aside
       aria-label="Signal assistant"
-      className={`assistant-panel${isOpen ? " assistant-panel-active" : ""}`}
+      className={`assistant-panel${isExpanded ? " assistant-panel-active" : ""}`}
       onFocusCapture={() => setIsOpen(true)}
       onPointerDownCapture={() => setIsOpen(true)}
       ref={panelRef}
     >
       <div className="assistant-handle" />
 
-      <div className="assistant-thread" aria-live="polite" ref={threadRef}>
-        {messages.map((message) =>
-          message.role === "user" ? (
-            <div className="assistant-message-user" key={message.id}>
-              <div className="assistant-name">You</div>
-              <p>{message.body}</p>
-            </div>
-          ) : (
-            <div
-              className="assistant-message assistant-message-system"
-              key={message.id}
-            >
-              <MessageSquareText size={18} aria-hidden="true" />
-              <div>
-                <div className="assistant-name">
-                  Signal assistant
-                  {message.toolName ? (
-                    <span className="assistant-tool">{message.toolName}</span>
-                  ) : null}
-                </div>
-                <p>{message.body}</p>
-                <WidgetList
-                  onPrompt={handleSuggestion}
-                  widgets={message.widgets ?? []}
-                />
+      {isExpanded ? (
+        <>
+          <div className="assistant-panel-header">
+            <div className="assistant-panel-heading">
+              <div className="assistant-panel-title">
+                <MessageSquareText size={17} aria-hidden="true" />
+                Chat
               </div>
+              <span title={visibleContext.description}>
+                {visibleContext.title}
+              </span>
             </div>
-          ),
-        )}
+            <div className="assistant-panel-actions">
+              <label className="assistant-memory-control">
+                <span>Memory</span>
+                <select
+                  aria-label="Chat memory"
+                  disabled={pending}
+                  onChange={(event) =>
+                    changeContextMode(event.target.value as ChatContextMode)
+                  }
+                  value={contextMode}
+                >
+                  {contextModeOptions.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <button
+                aria-label="Start a new chat"
+                disabled={pending}
+                onClick={startNewChat}
+                type="button"
+              >
+                <Plus size={16} aria-hidden="true" />
+              </button>
+            </div>
+          </div>
 
-        <div className="assistant-card">
-          <Sparkles size={18} aria-hidden="true" />
-          <div>
-            <div className="assistant-name">{suggestionTitle}</div>
-            <div className="assistant-suggestions">
-              {suggestions.map((suggestion) => (
+          <div className="assistant-context-bar">
+            <span>{activeContext ? "Selected" : "Page"}</span>
+            <strong>{visibleContext.title}</strong>
+            <div>
+              {contextActions.map((action) => (
                 <button
                   disabled={pending}
-                  key={`${suggestion.label}:${suggestion.prompt}`}
-                  onClick={(event) =>
-                    handleSuggestion(suggestion.prompt, event)
-                  }
+                  key={action.label}
+                  onClick={(event) => handleContextAction(action.prompt, event)}
                   type="button"
                 >
-                  {suggestion.label}
+                  {action.label}
                 </button>
               ))}
+              {activeContext ? (
+                <button
+                  disabled={pending}
+                  onClick={() => setActiveContext(null)}
+                  type="button"
+                >
+                  Clear
+                </button>
+              ) : null}
             </div>
           </div>
-        </div>
+        </>
+      ) : null}
 
-        {pending ? (
-          <div className="assistant-message assistant-message-system assistant-loading">
-            <LoaderCircle
-              className="assistant-loader-icon"
-              size={18}
-              aria-hidden="true"
-            />
-            <div>
-              <div className="assistant-name">Signal assistant</div>
-              <p>{pendingLabel}</p>
+      <div className="assistant-body">
+        {isExpanded ? (
+          <nav className="assistant-history" aria-label="Chat history">
+            <div className="assistant-history-heading">
+              <History size={16} aria-hidden="true" />
+              <span>History</span>
             </div>
-          </div>
+
+            <button
+              className="assistant-history-new"
+              disabled={pending}
+              onClick={startNewChat}
+              type="button"
+            >
+              <Plus size={15} aria-hidden="true" />
+              New chat
+            </button>
+
+            <div className="assistant-history-list">
+              {sessions.length === 0 ? (
+                <p className="assistant-history-empty">No saved chats yet.</p>
+              ) : (
+                sessions.map((session) => (
+                  <button
+                    aria-current={session.id === sessionId ? "true" : undefined}
+                    className="assistant-history-item"
+                    disabled={pending}
+                    key={session.id}
+                    onClick={() => selectSession(session.id)}
+                    type="button"
+                  >
+                    <strong>{cleanChatDisplayCopy(session.title)}</strong>
+                    <span>
+                      {session.preview
+                        ? cleanChatDisplayCopy(session.preview)
+                        : "No messages yet"}
+                    </span>
+                    <small>
+                      {formatSessionTime(session.updatedAt)} ·{" "}
+                      {session.messageCount} messages
+                    </small>
+                  </button>
+                ))
+              )}
+            </div>
+          </nav>
         ) : null}
-      </div>
 
-      <form
-        action="/api/chat"
-        className="assistant-input"
-        onSubmit={submitMessage}
-        ref={formRef}
-      >
-        <input
-          aria-label="Ask about connected data"
-          disabled={pending}
-          onChange={(event) => setInput(event.target.value)}
-          placeholder={
-            pending ? "Reading connected data..." : "Ask about your store ecosystem"
-          }
-          value={input}
-        />
-        <button
-          data-pending={pending ? "true" : undefined}
-          disabled={!pending && !input.trim()}
-          onClick={pending ? cancelPendingRun : undefined}
-          type={pending ? "button" : "submit"}
-          aria-label={pending ? "Stop response" : "Send message"}
-        >
-          {pending ? (
-            <X size={17} aria-hidden="true" />
-          ) : (
-            <Search size={17} aria-hidden="true" />
-          )}
-        </button>
-      </form>
+        <div className="assistant-conversation">
+          <div className="assistant-thread" aria-live="polite" ref={threadRef}>
+            {messages.map((message) =>
+              message.role === "user" ? (
+                <div className="assistant-message-user" key={message.id}>
+                  <div className="assistant-name">You</div>
+                  <p>{cleanChatDisplayCopy(message.body)}</p>
+                </div>
+              ) : (
+                <div
+                  className="assistant-message assistant-message-system"
+                  key={message.id}
+                >
+                  <MessageSquareText size={18} aria-hidden="true" />
+                  <div>
+                    <div className="assistant-name">
+                      Signal assistant
+                      {message.toolName ? (
+                        <span className="assistant-tool">
+                          {message.toolName}
+                        </span>
+                      ) : null}
+                    </div>
+                    <AssistantFormattedText
+                      text={cleanChatDisplayCopy(message.body)}
+                    />
+                    <WidgetList
+                      onPrompt={handleSuggestion}
+                      widgets={message.widgets ?? []}
+                    />
+                  </div>
+                </div>
+              ),
+            )}
+
+            {showSuggestionCard ? (
+              <div className="assistant-card">
+                <Sparkles size={18} aria-hidden="true" />
+                <div>
+                  <div className="assistant-name">{suggestionTitle}</div>
+                  <div className="assistant-suggestions">
+                    {suggestions.map((suggestion) => (
+                      <button
+                        disabled={pending}
+                        key={`${suggestion.label}:${suggestion.prompt}`}
+                        onClick={(event) =>
+                          handleSuggestion(suggestion.prompt, event)
+                        }
+                        type="button"
+                      >
+                        {suggestion.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            ) : null}
+
+            {pending ? (
+              <div className="assistant-message assistant-message-system assistant-loading">
+                <LoaderCircle
+                  className="assistant-loader-icon"
+                  size={18}
+                  aria-hidden="true"
+                />
+                <div>
+                  <div className="assistant-name">Signal assistant</div>
+                  <p>{pendingLabel}</p>
+                </div>
+              </div>
+            ) : null}
+          </div>
+
+          <form
+            action="/api/chat"
+            className="assistant-input"
+            onSubmit={submitMessage}
+            ref={formRef}
+          >
+            <input
+              aria-label="Ask about connected data"
+              disabled={pending}
+              onChange={(event) => setInput(event.target.value)}
+              placeholder={
+                pending
+                  ? "Reading connected data..."
+                  : "Ask about your store ecosystem"
+              }
+              value={input}
+            />
+            <button
+              data-pending={pending ? "true" : undefined}
+              disabled={!pending && !input.trim()}
+              onClick={pending ? cancelPendingRun : undefined}
+              type={pending ? "button" : "submit"}
+              aria-label={pending ? "Stop response" : "Send message"}
+            >
+              {pending ? (
+                <X size={17} aria-hidden="true" />
+              ) : (
+                <Search size={17} aria-hidden="true" />
+              )}
+            </button>
+          </form>
+        </div>
+      </div>
     </aside>
   );
+}
+
+function buildChatSnapshotUrl(sessionId?: string | null) {
+  const params = new URLSearchParams({ includeSessions: "1" });
+
+  if (sessionId) {
+    params.set("sessionId", sessionId);
+  }
+
+  return `/api/chat?${params.toString()}`;
+}
+
+function isContextMode(value: unknown): value is ChatContextMode {
+  return value === "focused" || value === "clean" || value === "thread";
+}
+
+function buildPageContext(pathname: string): ChatOpenContext {
+  if (pathname === "/today") {
+    return {
+      source: "page",
+      title: "Today",
+      description: "Top Signals that need attention now.",
+      href: pathname,
+      defaultPrompt:
+        "Summarize the most important Signals and tell me which one deserves attention first.",
+    };
+  }
+
+  if (pathname === "/signals") {
+    return {
+      source: "page",
+      title: "Signal center",
+      description: "All Signals filtered by status.",
+      href: pathname,
+      defaultPrompt:
+        "Summarize these Signals and point out the most important pattern.",
+    };
+  }
+
+  if (pathname.startsWith("/signals/")) {
+    const signalId = getSignalIdFromPathname(pathname);
+
+    return {
+      source: "page",
+      title: "Signal detail",
+      description: "Evidence, recommendation, action plan, approval, execution, and outcome for one Signal.",
+      href: pathname,
+      signalId: signalId ?? undefined,
+      objectType: "signal",
+      objectId: signalId ?? undefined,
+      defaultPrompt:
+        "Summarize this Signal, the evidence that matters, and the safest next step.",
+    };
+  }
+
+  if (pathname === "/actions") {
+    return {
+      source: "page",
+      title: "Actions",
+      description: "Approved actions, execution status, verification, and outcomes.",
+      href: pathname,
+      defaultPrompt:
+        "Summarize action status and flag anything that needs follow-up.",
+    };
+  }
+
+  if (pathname === "/connections") {
+    return {
+      source: "page",
+      title: "Connections",
+      description: "Connected commerce systems and sync status.",
+      href: pathname,
+      defaultPrompt:
+        "Summarize connected systems and what data Ora can read from them.",
+    };
+  }
+
+  if (pathname.startsWith("/settings") || pathname === "/invite") {
+    return {
+      source: "page",
+      title: "Settings",
+      description: "Account, company, invitations, and app configuration.",
+      href: pathname,
+      defaultPrompt:
+        "Summarize what can be managed here.",
+    };
+  }
+
+  return {
+    source: "page",
+    title: "Current page",
+    description: "The current Ora workspace view.",
+    href: pathname,
+    defaultPrompt: "Summarize this context and what I should do next.",
+  };
+}
+
+function buildContextActions(context: ChatOpenContext): AssistantSuggestion[] {
+  const title = context.title ?? "this context";
+
+  return [
+    {
+      label: "Explain",
+      prompt:
+        context.defaultPrompt ??
+        `Summarize ${title} in operator terms. Do not talk about the UI.`,
+    },
+    {
+      label: "Next move",
+      prompt: `What should I review next for ${title}? Keep it focused and practical.`,
+    },
+    {
+      label: "Data behind it",
+      prompt: `What connected data should I inspect to validate ${title}?`,
+    },
+  ];
+}
+
+function getChatContextTarget(target: EventTarget | null) {
+  if (!(target instanceof Element)) return null;
+
+  const interactive = target.closest<HTMLElement>(
+    "a,button,input,textarea,select,summary",
+  );
+
+  if (
+    interactive &&
+    !interactive.matches("[data-chat-prompt],[data-chat-explain]")
+  ) {
+    return null;
+  }
+
+  return target.closest<HTMLElement>(
+    "[data-chat-prompt],[data-chat-explain]",
+  );
+}
+
+function getChatContextPrompt(element: HTMLElement) {
+  const prompt = element.dataset.chatPrompt?.trim();
+  if (prompt) return prompt;
+
+  const title =
+    element.dataset.chatTitle?.trim() ||
+    element.getAttribute("aria-label")?.trim() ||
+    element.textContent?.trim().replace(/\s+/g, " ").slice(0, 120);
+
+  if (!title) return null;
+
+  return `Summarize "${title}" and what matters operationally.`;
+}
+
+function readChatContext(element: HTMLElement): ChatOpenContext {
+  return {
+    source: element.dataset.chatSource,
+    title:
+      element.dataset.chatTitle ||
+      element.getAttribute("aria-label") ||
+      undefined,
+    description: element.dataset.chatDescription,
+    href: window.location.pathname,
+    signalId:
+      element.dataset.chatSignalId ??
+      getSignalIdFromPathname(window.location.pathname) ??
+      undefined,
+    actionPlanId: element.dataset.chatActionPlanId,
+    objectType: element.dataset.chatObjectType,
+    objectId: element.dataset.chatObjectId,
+  };
+}
+
+function getSignalIdFromPathname(pathname: string) {
+  const match = pathname.match(/^\/signals\/([^/?#]+)/);
+
+  return match?.[1] ? decodeURIComponent(match[1]) : null;
+}
+
+function formatSessionTime(value: string) {
+  const date = new Date(value);
+  const now = new Date();
+  const sameDay = date.toDateString() === now.toDateString();
+
+  return new Intl.DateTimeFormat(undefined, {
+    hour: "numeric",
+    minute: "2-digit",
+    ...(sameDay ? {} : { month: "short", day: "numeric" }),
+  }).format(date);
+}
+
+function AssistantFormattedText({ text }: { text: string }) {
+  const formatted = formatAssistantText(text);
+
+  if (formatted.steps.length === 0) {
+    return (
+      <div className="assistant-formatted-text">
+        {formatted.paragraphs.map((paragraph) => (
+          <p key={paragraph}>{paragraph}</p>
+        ))}
+      </div>
+    );
+  }
+
+  return (
+    <div className="assistant-formatted-text">
+      {formatted.paragraphs.map((paragraph) => (
+        <p key={paragraph}>{paragraph}</p>
+      ))}
+      <ol className="assistant-step-list">
+        {formatted.steps.map((step) => (
+          <li key={step.title}>
+            <strong>{step.title}</strong>
+            <span>{step.body}</span>
+          </li>
+        ))}
+      </ol>
+    </div>
+  );
+}
+
+function formatAssistantText(text: string) {
+  const normalized = text.trim();
+  const stepRegex = /(?:^|\s)(\d+)\.\s+([^:]{2,72}):\s*/g;
+  const matches = [...normalized.matchAll(stepRegex)];
+
+  if (matches.length < 2) {
+    return {
+      paragraphs: splitParagraphs(normalized),
+      steps: [] as Array<{ title: string; body: string }>,
+    };
+  }
+
+  const firstIndex = matches[0].index ?? 0;
+  const prefix = normalized.slice(0, firstIndex).trim();
+  const steps = matches.map((match, index) => {
+    const start = (match.index ?? 0) + match[0].length;
+    const end =
+      index + 1 < matches.length
+        ? matches[index + 1].index ?? normalized.length
+        : normalized.length;
+
+    return {
+      title: match[2].trim(),
+      body: normalized.slice(start, end).trim(),
+    };
+  });
+
+  return {
+    paragraphs: splitParagraphs(prefix),
+    steps,
+  };
+}
+
+function splitParagraphs(text: string) {
+  return text
+    .split(/\n{2,}|\r?\n/)
+    .map((paragraph) => paragraph.trim())
+    .filter(Boolean);
+}
+
+function cleanChatDisplayCopy(value: string) {
+  return value
+    .replace(
+      /^Based on Signal detail, what should I review or do next\?/i,
+      "What should I review next for this Signal?",
+    )
+    .replace(
+      /^You clicked on a Signal detail page that shows comprehensive information about a specific Signal, including/i,
+      "This Signal detail brings together",
+    )
+    .replace(
+      /^You clicked on a Signal detail page, which shows comprehensive information about a specific Signal\. This includes/i,
+      "This Signal detail brings together",
+    )
+    .replace(
+      /^You clicked on a Signal detail page/i,
+      "This Signal detail",
+    )
+    .replace(/\bwhat the user clicked\b/gi, "the current context")
+    .trim();
 }
 
 function buildSuggestionTitle(messages: AssistantMessage[]) {
@@ -456,6 +1037,16 @@ function buildSuggestionTitle(messages: AssistantMessage[]) {
   if (context.mode === "inventory") return "Suggested inventory reads";
 
   return "Suggested connected reads";
+}
+
+function latestAssistantHasFollowups(messages: AssistantMessage[]) {
+  const latestAssistant = [...messages]
+    .reverse()
+    .find((message) => message.role === "assistant" && message.id !== "intro");
+
+  return Boolean(
+    latestAssistant?.widgets?.some((widget) => widget.type === "followup_chips"),
+  );
 }
 
 function buildContextualSuggestions(
@@ -698,7 +1289,7 @@ function uniqueSuggestions(suggestions: AssistantSuggestion[]) {
     unique.push(suggestion);
   }
 
-  return unique.slice(0, 5);
+  return unique.slice(0, 2);
 }
 
 async function readChatEventStream(

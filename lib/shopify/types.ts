@@ -46,3 +46,14 @@ export type ProductForDetection = {
   metafieldsJson?: unknown;
 };
 
+export type ShopifyCustomerLifecycleInput = {
+  shopifyCustomerId: string;
+  email?: string | null;
+  name?: string | null;
+  orderCount: number;
+  totalSpentCents: number;
+  currency: string;
+  firstOrderAt?: Date | null;
+  lastOrderAt?: Date | null;
+  rawJson: unknown;
+};

@@ -51,6 +51,7 @@ export async function getSignalDetail(companyId: string, id: string) {
     where: { id, companyId },
     include: {
       evidence: { orderBy: { observedAt: "desc" } },
+      customerGroups: { orderBy: { builtAt: "desc" } },
       recommendations: { orderBy: { id: "asc" } },
       actionPlans: {
         orderBy: { createdAt: "desc" },

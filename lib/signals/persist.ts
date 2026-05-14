@@ -5,6 +5,7 @@ import {
   detectProductHealthSignals,
   isGiftCardProduct,
 } from "@/lib/signals/product-health";
+import { syncCustomerLifecycleForConnection } from "@/lib/lifecycle/sync";
 
 const managedStoreSignalTypes = [
   "product_missing_important_metafields",
@@ -213,6 +214,20 @@ export async function detectSignalsForConnection(shopifyConnectionId: string) {
     }
   }
 
+  let lifecycleResult: Awaited<
+    ReturnType<typeof syncCustomerLifecycleForConnection>
+  > | null = null;
+  let lifecycleError: string | null = null;
+
+  try {
+    lifecycleResult = await syncCustomerLifecycleForConnection(shopifyConnectionId);
+  } catch (error) {
+    lifecycleError =
+      error instanceof Error
+        ? error.message
+        : "Customer lifecycle detection failed.";
+  }
+
   return {
     activeGiftCards: activeGiftCards.length,
     activeProducts: activeProducts.length,
@@ -223,6 +238,13 @@ export async function detectSignalsForConnection(shopifyConnectionId: string) {
     draftCatalog: draftCatalog.length,
     productHealth: productHealth.length,
     signalCount: productHealth.length + draftCatalog.length,
+    customerLifecycleError: lifecycleError,
+    customerLifecycleSignals: lifecycleResult?.candidates ?? 0,
+    customersClassified: lifecycleResult?.purchasingCustomers ?? 0,
+    customersFetched: lifecycleResult?.customersFetched ?? 0,
+    lifecycleCounts: lifecycleResult?.counts ?? null,
+    signalCountWithLifecycle:
+      productHealth.length + draftCatalog.length + (lifecycleResult?.candidates ?? 0),
     scannedProducts: products.length,
   };
 }

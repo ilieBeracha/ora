@@ -1,15 +1,54 @@
+import {
+  Activity,
+  CheckCircle2,
+  ClipboardCheck,
+  Database,
+  FileCheck2,
+  Gauge,
+  Lightbulb,
+  Play,
+  ShieldCheck,
+  Target,
+  UsersRound,
+} from "lucide-react";
 import { notFound } from "next/navigation";
+import type { ReactNode } from "react";
 
 import { PageHeader } from "@/components/page-header";
 import { RiskBadge, SeverityBadge, StatusBadge } from "@/components/status-badge";
 import { canManageApp, requireCurrentUser } from "@/lib/auth/session";
-import { formatDate } from "@/lib/format";
+import { formatDate, formatMoneyFromCents, titleCase } from "@/lib/format";
 import { getSignalDetail } from "@/lib/signals/queries";
 import {
   approveActionPlanAction,
   executeActionPlanAction,
   ignoreSignalAction,
 } from "./actions";
+
+type EvidenceExample = {
+  title: string;
+  reasons: string[];
+  productType: string | null;
+  totalInventory: number | null;
+  tags: number | null;
+  descriptionLength: number | null;
+  hasImage: boolean | null;
+};
+
+type CustomerMemberExample = {
+  shopifyCustomerId: string;
+  email: string | null;
+  name: string | null;
+  lifecycleStage: string;
+  lifecycleTags: string[];
+  orderCount: number | null;
+  totalSpentCents: number | null;
+  currency: string | null;
+  lastOrderAt: string | null;
+  previousStage: string | null;
+};
+
+type LifecycleState = "complete" | "current" | "waiting";
 
 export default async function SignalDetailPage({
   params,
@@ -24,9 +63,66 @@ export default async function SignalDetailPage({
 
   const recommendation = signal.recommendations[0];
   const actionPlan = signal.actionPlans[0];
+  const customerGroup = signal.customerGroups[0] ?? null;
   const latestExecution = actionPlan?.executions[0];
   const latestOutcome = signal.outcomes[0] ?? actionPlan?.outcomes[0];
   const canManage = canManageApp(user.role);
+  const canExecutePlan = isExecutableActionPlan(actionPlan);
+  const evidencePayload = getPrimaryEvidencePayload(
+    signal.evidence.map((item) => item.rawPayload),
+  );
+  const evidenceExamples = parseEvidenceExamples(evidencePayload?.examples);
+  const customerMembers = parseCustomerMembers(customerGroup?.membersJson);
+  const detectedCount = numberValue(evidencePayload?.count);
+  const affectedCount = customerGroup?.memberCount ?? detectedCount;
+  const activeProductCount = numberValue(evidencePayload?.activeProductCount);
+  const confidencePercent = Math.round(signal.confidence * 100);
+  const lifecycle = [
+    {
+      label: "Signal",
+      detail: "Detected",
+      icon: Target,
+      state: "complete" as LifecycleState,
+    },
+    {
+      label: "Evidence",
+      detail: `${signal.evidence.length} record${
+        signal.evidence.length === 1 ? "" : "s"
+      }`,
+      icon: Database,
+      state: signal.evidence.length ? "complete" : "waiting",
+    },
+    {
+      label: "Recommendation",
+      detail: recommendation ? "Ready" : "Missing",
+      icon: Lightbulb,
+      state: recommendation ? "complete" : "waiting",
+    },
+    {
+      label: "Action plan",
+      detail: actionPlan ? titleCase(actionPlan.status) : "Not prepared",
+      icon: ClipboardCheck,
+      state: actionPlan ? "current" : "waiting",
+    },
+    {
+      label: "Approval",
+      detail: actionPlan?.approval ? "Approved" : "Required",
+      icon: ShieldCheck,
+      state: actionPlan?.approval ? "complete" : actionPlan ? "current" : "waiting",
+    },
+    {
+      label: "Execution",
+      detail: latestExecution ? titleCase(latestExecution.status) : "Not run",
+      icon: Play,
+      state: latestExecution ? "complete" : actionPlan?.approval ? "current" : "waiting",
+    },
+    {
+      label: "Outcome",
+      detail: latestOutcome ? titleCase(latestOutcome.status) : "Not measured",
+      icon: Activity,
+      state: latestOutcome ? "complete" : latestExecution ? "current" : "waiting",
+    },
+  ];
 
   return (
     <>
@@ -47,154 +143,457 @@ export default async function SignalDetailPage({
         }
       />
 
-      <div className="two-col">
-        <div className="stack">
-          <section className="panel panel-pad step-panel">
-            <div className="step-number">01</div>
-            <div>
-              <p className="kicker">What happened</p>
-              <div className="mb-3 flex flex-wrap gap-2">
-                <SeverityBadge severity={signal.severity} />
-                <StatusBadge status={signal.status} />
-                <StatusBadge status={signal.category} />
+      <div className="signal-detail-view">
+        <section
+          className="signal-hero-panel"
+          data-chat-explain="true"
+          data-chat-source="signal-detail-hero"
+          data-chat-title={signal.title}
+          data-chat-description={signal.summary}
+          data-chat-signal-id={signal.id}
+          data-chat-action-plan-id={actionPlan?.id}
+          data-chat-object-type="signal"
+          data-chat-object-id={signal.id}
+          data-chat-prompt={`Explain this Signal detail: ${signal.title}. Summarize what matters and what I should inspect next.`}
+        >
+          <div className="signal-hero-main">
+            <div className="signal-hero-badges">
+              <SeverityBadge severity={signal.severity} />
+              <StatusBadge status={signal.status} />
+              <StatusBadge status={signal.category} />
+            </div>
+            <h2>{signal.summary}</h2>
+            <p>
+              Ora is treating this as a {titleCase(signal.category)} Signal
+              with {confidencePercent}% confidence. Review the evidence, then
+              move only one exact action through approval.
+            </p>
+          </div>
+
+          <div className="signal-score-grid">
+            <MetricTile
+              label="Affected"
+              value={affectedCount ? String(affectedCount) : "Unknown"}
+              hint={affectedLabel(signal.affectedObjectType)}
+            />
+            <MetricTile
+              label="Confidence"
+              value={`${confidencePercent}%`}
+              hint="Signal ranking"
+              meter={confidencePercent}
+            />
+            <MetricTile
+              label="Impact"
+              value={formatMoneyFromCents(signal.impactEstimateCents)}
+              hint="Estimate"
+            />
+            <MetricTile
+              label="Detected"
+              value={formatDate(signal.detectedAt)}
+              hint="Last scan"
+            />
+          </div>
+        </section>
+
+        <section className="signal-lifecycle" aria-label="Signal lifecycle">
+          {lifecycle.map((item) => {
+            const Icon = item.icon;
+            return (
+              <div
+                className={`signal-lifecycle-item signal-lifecycle-${item.state}`}
+                key={item.label}
+              >
+                <span className="signal-lifecycle-icon">
+                  <Icon size={16} aria-hidden="true" />
+                </span>
+                <span>
+                  <strong>{item.label}</strong>
+                  <small>{item.detail}</small>
+                </span>
               </div>
-              <p className="leading-7">{signal.summary}</p>
-            </div>
-          </section>
+            );
+          })}
+        </section>
 
-          <section className="panel panel-pad step-panel">
-            <div className="step-number">02</div>
-            <div>
-              <p className="kicker">Why it matters</p>
-              <p className="leading-7">
-                {recommendation?.expectedImpact ??
-                  `Ora ranked this Signal by severity ${signal.severity} and confidence ${Math.round(
-                    signal.confidence * 100,
-                  )}%.`}
-              </p>
-            </div>
-          </section>
+        <div className="signal-detail-grid">
+          <div className="signal-detail-main">
+            <section
+              className="signal-section-card"
+              data-chat-explain="true"
+              data-chat-source="signal-section"
+              data-chat-title="What happened"
+              data-chat-description={signal.summary}
+              data-chat-signal-id={signal.id}
+              data-chat-action-plan-id={actionPlan?.id}
+              data-chat-object-type="signal"
+              data-chat-object-id={signal.id}
+              data-chat-prompt={`Explain what happened in this Signal: ${signal.title}.`}
+            >
+              <SectionHeader
+                icon={<Target size={18} aria-hidden="true" />}
+                label="What happened"
+                title={signal.title}
+              />
+              <p className="signal-section-copy">{signal.summary}</p>
+              <div className="signal-mini-grid">
+                <FactMini label="Type" value={titleCase(signal.type)} />
+                <FactMini
+                  label="Affected object"
+                  value={titleCase(signal.affectedObjectType)}
+                />
+                <FactMini label="Updated" value={formatDate(signal.updatedAt)} />
+                <FactMini
+                  label={customerGroup ? "Customer group" : "Active catalog size"}
+                  value={
+                    customerGroup
+                      ? `${customerGroup.memberCount} members`
+                      : activeProductCount
+                        ? String(activeProductCount)
+                        : "Unknown"
+                  }
+                />
+              </div>
+            </section>
 
-          <section className="panel panel-pad step-panel">
-            <div className="step-number">03</div>
-            <div>
-              <p className="kicker">Evidence</p>
-              <div className="stack">
+            <section
+              className="signal-section-card"
+              data-chat-explain="true"
+              data-chat-source="signal-section"
+              data-chat-title="Evidence"
+              data-chat-description="Observed facts behind the Signal."
+              data-chat-signal-id={signal.id}
+              data-chat-action-plan-id={actionPlan?.id}
+              data-chat-object-type="signal"
+              data-chat-object-id={signal.id}
+              data-chat-prompt={`Explain the evidence for this Signal: ${signal.title}.`}
+            >
+              <SectionHeader
+                icon={<Database size={18} aria-hidden="true" />}
+                label="Evidence"
+                title="Observed facts behind the Signal"
+              />
+              <div className="evidence-visual-grid">
                 {signal.evidence.map((evidence) => (
-                  <div key={evidence.id}>
-                    <div className="flex flex-wrap items-center gap-2">
-                      <StatusBadge status={evidence.provider} />
-                      <StatusBadge status={evidence.evidenceType} />
-                      <span className="muted text-sm">
-                        {formatDate(evidence.observedAt)}
-                      </span>
+                  <article className="evidence-panel" key={evidence.id}>
+                    <div className="evidence-panel-top">
+                      <div>
+                        <p className="kicker">{titleCase(evidence.evidenceType)}</p>
+                        <p>{evidence.displayText}</p>
+                      </div>
+                      <div className="evidence-badge-stack">
+                        <StatusBadge status={evidence.provider} />
+                        <span className="muted text-sm">
+                          {formatDate(evidence.observedAt)}
+                        </span>
+                      </div>
                     </div>
-                    <p className="mt-2 leading-6">{evidence.displayText}</p>
-                  </div>
+                  </article>
                 ))}
               </div>
-            </div>
-          </section>
 
-          <section className="panel panel-pad step-panel">
-            <div className="step-number">04</div>
-            <div>
-              <p className="kicker">Recommended action</p>
-              {recommendation ? (
-                <>
-                  <div className="mb-3 flex flex-wrap gap-2">
-                    <RiskBadge risk={recommendation.riskLevel} />
-                    <span className="badge">
-                      {Math.round(recommendation.confidence * 100)}% confidence
-                    </span>
+              {evidenceExamples.length ? (
+                <div className="signal-examples">
+                  <div className="signal-examples-header">
+                    <h3>Example products</h3>
+                    <span>{evidenceExamples.length} shown from evidence</span>
                   </div>
-                  <h2 className="section-title">{recommendation.title}</h2>
-                  <p className="muted mt-2 leading-6">
-                    {recommendation.reasoning}
-                  </p>
-                  {recommendation.expectedImpact ? (
-                    <p className="mt-3 text-sm leading-6">
-                      {recommendation.expectedImpact}
-                    </p>
-                  ) : null}
-                </>
-              ) : (
-                <p className="muted">No recommendation exists yet.</p>
-              )}
-            </div>
-          </section>
+                  <div className="signal-example-list">
+                    {evidenceExamples.map((example, index) => (
+                      <article
+                        className="signal-example-row"
+                        key={`${example.title}-${index}`}
+                      >
+                        <div className="signal-example-number">
+                          {String(index + 1).padStart(2, "0")}
+                        </div>
+                        <div>
+                          <h4>{example.title}</h4>
+                          <div className="signal-example-meta">
+                            <span>{example.productType ?? "No product type"}</span>
+                            <span>
+                              {example.totalInventory == null
+                                ? "Inventory unknown"
+                                : `${example.totalInventory} units`}
+                            </span>
+                            <span>
+                              {example.tags == null
+                                ? "Tags unknown"
+                                : `${example.tags} tag${example.tags === 1 ? "" : "s"}`}
+                            </span>
+                            <span>
+                              {example.descriptionLength == null
+                                ? "Copy unknown"
+                                : `${example.descriptionLength} copy chars`}
+                            </span>
+                          </div>
+                          {example.reasons.length ? (
+                            <div className="signal-reason-row">
+                              {example.reasons.map((reason) => (
+                                <span className="badge" key={reason}>
+                                  {reason}
+                                </span>
+                              ))}
+                            </div>
+                          ) : null}
+                        </div>
+                      </article>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
+            </section>
 
-          <section className="panel panel-pad step-panel">
-            <div className="step-number">05</div>
-            <div>
-              <p className="kicker">Action plan</p>
-              {actionPlan ? (
-                <>
-                  <div className="mb-3 flex flex-wrap gap-2">
-                    <StatusBadge status={actionPlan.status} />
-                    <StatusBadge status={actionPlan.provider} />
+            {customerGroup ? (
+              <section
+                className="signal-section-card customer-group-card"
+                data-chat-explain="true"
+                data-chat-source="signal-section"
+                data-chat-title={customerGroup.name}
+                data-chat-description={customerGroup.description}
+                data-chat-signal-id={signal.id}
+                data-chat-action-plan-id={actionPlan?.id}
+                data-chat-object-type="customer_group"
+                data-chat-object-id={customerGroup.id}
+                data-chat-prompt={`Explain this customer group and what grouped actions make sense: ${customerGroup.name}.`}
+              >
+                <SectionHeader
+                  icon={<UsersRound size={18} aria-hidden="true" />}
+                  label="Customer group"
+                  title={customerGroup.name}
+                />
+                <p className="signal-section-copy">{customerGroup.description}</p>
+                <div className="signal-mini-grid customer-group-metrics">
+                  <FactMini
+                    label="Members"
+                    value={String(customerGroup.memberCount)}
+                  />
+                  <FactMini
+                    label="Estimated value"
+                    value={formatMoneyFromCents(customerGroup.estimatedRevenueCents)}
+                  />
+                  <FactMini
+                    label="Status"
+                    value={titleCase(customerGroup.status)}
+                  />
+                  <FactMini
+                    label="Built"
+                    value={formatDate(customerGroup.builtAt)}
+                  />
+                </div>
+                {customerMembers.length ? (
+                  <div className="signal-examples">
+                    <div className="signal-examples-header">
+                      <h3>Member sample</h3>
+                      <span>{customerMembers.length} shown from group snapshot</span>
+                    </div>
+                    <div className="signal-example-list">
+                      {customerMembers.slice(0, 8).map((member, index) => (
+                        <article
+                          className="signal-example-row customer-member-row"
+                          key={`${member.shopifyCustomerId}-${index}`}
+                        >
+                          <div className="signal-example-number">
+                            {String(index + 1).padStart(2, "0")}
+                          </div>
+                          <div>
+                            <h4>{member.name ?? member.email ?? "Shopify customer"}</h4>
+                            <div className="signal-example-meta">
+                              <span>{titleCase(member.lifecycleStage)}</span>
+                              <span>
+                                {member.orderCount == null
+                                  ? "Orders unknown"
+                                  : `${member.orderCount} orders`}
+                              </span>
+                              <span>
+                                {formatCustomerSpend(
+                                  member.totalSpentCents,
+                                  member.currency,
+                                )}
+                              </span>
+                              <span>
+                                {member.lastOrderAt
+                                  ? `Last order ${formatDate(member.lastOrderAt)}`
+                                  : "No last order date"}
+                              </span>
+                            </div>
+                            {member.lifecycleTags.length ? (
+                              <div className="signal-reason-row">
+                                {member.lifecycleTags.map((tag) => (
+                                  <span className="badge" key={tag}>
+                                    {titleCase(tag)}
+                                  </span>
+                                ))}
+                              </div>
+                            ) : null}
+                          </div>
+                        </article>
+                      ))}
+                    </div>
                   </div>
-                  <h2 className="section-title">
-                    {actionPlan.actionType.replaceAll("_", " ")}
-                  </h2>
-                  <pre className="mt-4 overflow-auto border border-[var(--line)] bg-[var(--panel-subtle)] p-4 text-xs leading-5">
-                    {JSON.stringify(actionPlan.previewPayload, null, 2)}
-                  </pre>
-                </>
-              ) : (
-                <p className="muted">
-                  This Signal is informational until Ora can prepare an exact
-                  action.
-                </p>
-              )}
-            </div>
-          </section>
+                ) : null}
+              </section>
+            ) : null}
 
-          <section className="panel panel-pad step-panel">
-            <div className="step-number">06</div>
-            <div>
-              <p className="kicker">Approval</p>
-              {actionPlan ? (
-                actionPlan.approval ? (
-                  <div>
-                    <StatusBadge status="approved" />
-                    <p className="mt-3 text-sm leading-6">
-                      Approved on {formatDate(actionPlan.approval.approvedAt)}.
+            <div className="signal-work-grid">
+              <section className="signal-section-card">
+                <SectionHeader
+                  icon={<Lightbulb size={18} aria-hidden="true" />}
+                  label="Recommended action"
+                  title={recommendation?.title ?? "No recommendation yet"}
+                />
+                {recommendation ? (
+                  <>
+                    <div className="signal-inline-badges">
+                      <RiskBadge risk={recommendation.riskLevel} />
+                      <span className="badge">
+                        {Math.round(recommendation.confidence * 100)}% confidence
+                      </span>
+                    </div>
+                    <p className="signal-section-copy">
+                      {recommendation.reasoning}
                     </p>
-                    <p className="muted mt-2 break-all text-xs">
-                      Payload hash: {actionPlan.approval.approvalPayloadHash}
-                    </p>
-                  </div>
-                ) : canManage ? (
-                  <form action={approveActionPlanAction} className="stack">
-                    <input type="hidden" name="actionPlanId" value={actionPlan.id} />
-                    <input
-                      type="hidden"
-                      name="approvalText"
-                      value="Approved in Ora Signal detail UI."
-                    />
-                    <p className="text-sm leading-6">
-                      Approval locks the exact execution payload. If it changes,
-                      Ora will require a new approval.
-                    </p>
-                    <button className="button button-primary" type="submit">
-                      Approve exact action
-                    </button>
-                  </form>
+                    {recommendation.expectedImpact ? (
+                      <div className="signal-callout">
+                        <CheckCircle2 size={16} aria-hidden="true" />
+                        <p>{recommendation.expectedImpact}</p>
+                      </div>
+                    ) : null}
+                  </>
                 ) : (
-                  <p className="muted">Only owners and admins can approve actions.</p>
-                )
-              ) : (
-                <p className="muted">No action plan is available for approval.</p>
-              )}
-            </div>
-          </section>
+                  <p className="muted">Ora has not prepared a recommendation.</p>
+                )}
+              </section>
 
-          <section className="panel panel-pad step-panel">
-            <div className="step-number">07</div>
-            <div>
-              <p className="kicker">Execution result</p>
-              {actionPlan?.approval && actionPlan.status !== "executed" && canManage ? (
+              <section className="signal-section-card">
+                <SectionHeader
+                  icon={<FileCheck2 size={18} aria-hidden="true" />}
+                  label="Action plan"
+                  title={
+                    actionPlan
+                      ? titleCase(actionPlan.actionType)
+                      : "No exact action prepared"
+                  }
+                />
+                {actionPlan ? (
+                  <>
+                    <div className="signal-inline-badges">
+                      <StatusBadge status={actionPlan.status} />
+                      <StatusBadge status={actionPlan.provider} />
+                    </div>
+                    <div className="signal-plan-preview">
+                      <FactMini label="Created" value={formatDate(actionPlan.createdAt)} />
+                      <FactMini label="Updated" value={formatDate(actionPlan.updatedAt)} />
+                    </div>
+                    <details className="payload-details">
+                      <summary>Preview exact payload</summary>
+                      <pre>{JSON.stringify(actionPlan.previewPayload, null, 2)}</pre>
+                    </details>
+                  </>
+                ) : (
+                  <p className="muted">
+                    This Signal is informational until Ora can prepare an exact
+                    action.
+                  </p>
+                )}
+              </section>
+            </div>
+
+            <section className="signal-section-card">
+              <SectionHeader
+                icon={<ShieldCheck size={18} aria-hidden="true" />}
+                label="Approval, execution, outcome"
+                title="Strict mutation path"
+              />
+              <div className="signal-path-grid">
+                <PathPanel
+                  label="Approval"
+                  status={actionPlan?.approval ? "approved" : "required"}
+                  body={
+                    actionPlan?.approval
+                      ? `Approved on ${formatDate(actionPlan.approval.approvedAt)}.`
+                      : "Approval locks the exact execution payload before any connected system can be changed."
+                  }
+                  footnote={
+                    actionPlan?.approval
+                      ? `Payload hash: ${actionPlan.approval.approvalPayloadHash}`
+                      : null
+                  }
+                />
+                <PathPanel
+                  label="Execution"
+                  status={latestExecution?.status ?? "not run"}
+                  body={
+                    latestExecution
+                      ? latestExecution.errorMessage ??
+                        `Executed ${latestExecution.toolName} on ${formatDate(
+                          latestExecution.executedAt,
+                        )}.`
+                      : actionPlan && !canExecutePlan
+                        ? "This grouped action is approval-ready, but live execution for this provider is not enabled yet."
+                      : "Execution waits until approval exists and the payload still matches."
+                  }
+                />
+                <PathPanel
+                  label="Outcome"
+                  status={latestOutcome?.status ?? "pending"}
+                  body={
+                    latestOutcome
+                      ? latestOutcome.summary
+                      : "Outcome tracking starts after the approved action is verified."
+                  }
+                  footnote={
+                    latestOutcome
+                      ? `Measured ${formatDate(latestOutcome.measuredAt)}`
+                      : null
+                  }
+                />
+              </div>
+            </section>
+          </div>
+
+          <aside className="signal-side-panel">
+            <section className="signal-next-action">
+              <div className="signal-next-icon">
+                <Gauge size={18} aria-hidden="true" />
+              </div>
+              <div>
+                <p className="kicker">Next action</p>
+                <h2>
+                  {nextActionTitle(
+                    Boolean(actionPlan),
+                    Boolean(actionPlan?.approval),
+                    Boolean(latestExecution),
+                    canExecutePlan,
+                  )}
+                </h2>
+                <p>
+                  {nextActionBody(
+                    Boolean(actionPlan),
+                    Boolean(actionPlan?.approval),
+                    Boolean(latestExecution),
+                    canExecutePlan,
+                  )}
+                </p>
+              </div>
+
+              {actionPlan && !actionPlan.approval && canManage ? (
+                <form action={approveActionPlanAction}>
+                  <input type="hidden" name="actionPlanId" value={actionPlan.id} />
+                  <input
+                    type="hidden"
+                    name="approvalText"
+                    value="Approved in Ora Signal detail UI."
+                  />
+                  <button className="button button-primary" type="submit">
+                    Approve exact action
+                  </button>
+                </form>
+              ) : null}
+
+              {actionPlan?.approval &&
+              actionPlan.status !== "executed" &&
+              canManage &&
+              canExecutePlan ? (
                 <form action={executeActionPlanAction}>
                   <input type="hidden" name="actionPlanId" value={actionPlan.id} />
                   <button className="button button-primary" type="submit">
@@ -203,65 +602,278 @@ export default async function SignalDetailPage({
                 </form>
               ) : null}
 
-              {latestExecution ? (
-                <div className="mt-4">
-                  <StatusBadge status={latestExecution.status} />
-                  <p className="mt-3 text-sm leading-6">
-                    {latestExecution.errorMessage ??
-                      `Executed ${latestExecution.toolName} on ${formatDate(
-                        latestExecution.executedAt,
-                      )}.`}
-                  </p>
-                </div>
-              ) : (
-                <p className="muted mt-3">No execution has run yet.</p>
-              )}
-            </div>
-          </section>
-
-          <section className="panel panel-pad step-panel">
-            <div className="step-number">08</div>
-            <div>
-              <p className="kicker">Outcome tracking</p>
-              {latestOutcome ? (
-                <div>
-                  <StatusBadge status={latestOutcome.status} />
-                  <p className="mt-3 leading-6">{latestOutcome.summary}</p>
-                  <p className="muted mt-2 text-sm">
-                    Measured {formatDate(latestOutcome.measuredAt)}
-                  </p>
-                </div>
-              ) : (
-                <p className="muted">
-                  Outcome tracking starts after an approved action executes.
+              {actionPlan?.approval && !canExecutePlan ? (
+                <p className="muted text-sm">
+                  This action can be approved for review, but live execution for{" "}
+                  {titleCase(actionPlan.provider)} is not wired yet.
                 </p>
-              )}
-            </div>
-          </section>
-        </div>
+              ) : null}
 
-        <aside className="panel panel-pad self-start">
-          <h2 className="section-title">Signal facts</h2>
-          <dl className="mt-4 grid gap-3 text-sm">
-            <div>
-              <dt className="muted">Type</dt>
-              <dd className="m-0">{signal.type}</dd>
-            </div>
-            <div>
-              <dt className="muted">Affected object</dt>
-              <dd className="m-0">{signal.affectedObjectType}</dd>
-            </div>
-            <div>
-              <dt className="muted">Detected</dt>
-              <dd className="m-0">{formatDate(signal.detectedAt)}</dd>
-            </div>
-            <div>
-              <dt className="muted">Updated</dt>
-              <dd className="m-0">{formatDate(signal.updatedAt)}</dd>
-            </div>
-          </dl>
-        </aside>
+              {actionPlan && !canManage ? (
+                <p className="muted text-sm">
+                  Only owners and admins can approve or execute actions.
+                </p>
+              ) : null}
+            </section>
+
+            <section className="signal-facts-panel">
+              <h2 className="section-title">Signal facts</h2>
+              <dl>
+                <FactRow label="Type" value={titleCase(signal.type)} />
+                <FactRow label="Severity" value={titleCase(signal.severity)} />
+                <FactRow label="Status" value={titleCase(signal.status)} />
+                <FactRow label="Category" value={titleCase(signal.category)} />
+                <FactRow
+                  label="Affected"
+                  value={titleCase(signal.affectedObjectType)}
+                />
+                <FactRow label="Detected" value={formatDate(signal.detectedAt)} />
+                <FactRow label="Updated" value={formatDate(signal.updatedAt)} />
+              </dl>
+            </section>
+          </aside>
+        </div>
       </div>
     </>
   );
+}
+
+function MetricTile({
+  label,
+  value,
+  hint,
+  meter,
+}: {
+  label: string;
+  value: string;
+  hint: string;
+  meter?: number;
+}) {
+  return (
+    <div className="signal-score-card">
+      <span>{label}</span>
+      <strong>{value}</strong>
+      <small>{hint}</small>
+      {typeof meter === "number" ? (
+        <div className="signal-meter" aria-hidden="true">
+          <span style={{ width: `${Math.max(0, Math.min(100, meter))}%` }} />
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function SectionHeader({
+  icon,
+  label,
+  title,
+}: {
+  icon: ReactNode;
+  label: string;
+  title: string;
+}) {
+  return (
+    <header className="signal-section-header">
+      <span className="signal-section-icon">{icon}</span>
+      <div>
+        <p className="kicker">{label}</p>
+        <h2>{title}</h2>
+      </div>
+    </header>
+  );
+}
+
+function FactMini({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="signal-mini-fact">
+      <span>{label}</span>
+      <strong>{value}</strong>
+    </div>
+  );
+}
+
+function FactRow({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="signal-fact-row">
+      <dt>{label}</dt>
+      <dd>{value}</dd>
+    </div>
+  );
+}
+
+function PathPanel({
+  label,
+  status,
+  body,
+  footnote,
+}: {
+  label: string;
+  status: string;
+  body: string;
+  footnote?: string | null;
+}) {
+  return (
+    <article className="signal-path-panel">
+      <div>
+        <p className="kicker">{label}</p>
+        <StatusBadge status={status} />
+      </div>
+      <p>{body}</p>
+      {footnote ? <small>{footnote}</small> : null}
+    </article>
+  );
+}
+
+function getPrimaryEvidencePayload(payloads: unknown[]) {
+  return (
+    payloads.map(asRecord).find((payload) => Array.isArray(payload?.examples)) ??
+    payloads.map(asRecord).find(isPresentRecord) ??
+    null
+  );
+}
+
+function parseEvidenceExamples(value: unknown): EvidenceExample[] {
+  if (!Array.isArray(value)) return [];
+
+  return value
+    .map(asRecord)
+    .filter(isPresentRecord)
+    .map((item) => ({
+      title: stringValue(item.title, "Untitled product"),
+      reasons: Array.isArray(item.reasons)
+        ? item.reasons.map((reason) => String(reason)).filter(Boolean)
+        : [],
+      productType: nullableString(item.productType),
+      totalInventory: numberValue(item.totalInventory),
+      tags: numberValue(item.tags),
+      descriptionLength: numberValue(item.descriptionLength),
+      hasImage:
+        typeof item.hasImage === "boolean" ? item.hasImage : null,
+    }))
+    .slice(0, 10);
+}
+
+function affectedLabel(value: string) {
+  if (value === "store") return "Store-level";
+  if (value === "product") return "Products";
+  if (value === "customer_segment") return "Customer segment";
+  if (value === "collection") return "Collection";
+  return titleCase(value);
+}
+
+function nextActionTitle(
+  hasActionPlan: boolean,
+  hasApproval: boolean,
+  hasExecution: boolean,
+  canExecutePlan: boolean,
+) {
+  if (!hasActionPlan) return "Review evidence";
+  if (!hasApproval) return "Approve exact action";
+  if (!canExecutePlan) return "Ready for operator review";
+  if (!hasExecution) return "Execute approved action";
+  return "Track outcome";
+}
+
+function nextActionBody(
+  hasActionPlan: boolean,
+  hasApproval: boolean,
+  hasExecution: boolean,
+  canExecutePlan: boolean,
+) {
+  if (!hasActionPlan) {
+    return "This Signal does not have an executable plan yet, so the useful step is evidence review.";
+  }
+
+  if (!hasApproval) {
+    return "Approve only if the previewed payload is exactly the change you want Ora to make.";
+  }
+
+  if (!canExecutePlan) {
+    return "Ora prepared the exact grouped action. Live execution for this provider still needs a dedicated executor.";
+  }
+
+  if (!hasExecution) {
+    return "Ora will validate the approved payload hash before any Shopify mutation runs.";
+  }
+
+  return "Watch whether the Signal improves, resolves, or needs a different action.";
+}
+
+function parseCustomerMembers(value: unknown): CustomerMemberExample[] {
+  if (!Array.isArray(value)) return [];
+
+  return value
+    .map(asRecord)
+    .filter(isPresentRecord)
+    .map((item) => ({
+      shopifyCustomerId: stringValue(item.shopifyCustomerId, "unknown"),
+      email: nullableString(item.email),
+      name: nullableString(item.name),
+      lifecycleStage: stringValue(item.lifecycleStage, "unknown"),
+      lifecycleTags: Array.isArray(item.lifecycleTags)
+        ? item.lifecycleTags.map((tag) => String(tag)).filter(Boolean)
+        : [],
+      orderCount: numberValue(item.orderCount),
+      totalSpentCents: numberValue(item.totalSpentCents),
+      currency: nullableString(item.currency),
+      lastOrderAt: nullableString(item.lastOrderAt),
+      previousStage: nullableString(item.previousStage),
+    }))
+    .slice(0, 12);
+}
+
+function formatCustomerSpend(
+  totalSpentCents: number | null,
+  currency: string | null,
+) {
+  if (totalSpentCents == null) return "Spend unknown";
+
+  const amount = new Intl.NumberFormat("en", {
+    maximumFractionDigits: 0,
+    style: "currency",
+    currency: currency ?? "USD",
+  }).format(totalSpentCents / 100);
+
+  return `${amount} lifetime spend`;
+}
+
+function isExecutableActionPlan(
+  actionPlan: { provider: string; executionPayload: unknown } | null | undefined,
+) {
+  const payload = asRecord(actionPlan?.executionPayload);
+
+  return (
+    actionPlan?.provider === "shopify" &&
+    payload?.toolName === "shopify_setProductReferenceMetafield"
+  );
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+function isPresentRecord(
+  value: Record<string, unknown> | null,
+): value is Record<string, unknown> {
+  return Boolean(value);
+}
+
+function numberValue(value: unknown) {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string" && value.trim()) {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+
+  return null;
+}
+
+function stringValue(value: unknown, fallback: string) {
+  return typeof value === "string" && value.trim() ? value.trim() : fallback;
+}
+
+function nullableString(value: unknown) {
+  return typeof value === "string" && value.trim() ? value.trim() : null;
 }

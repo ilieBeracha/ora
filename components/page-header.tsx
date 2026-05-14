@@ -12,7 +12,16 @@ export function PageHeader({
   marker?: string;
 }) {
   return (
-    <div className="page-header mb-7">
+    <div
+      className="page-header mb-7"
+      data-chat-explain="true"
+      data-chat-source="page-header"
+      data-chat-title={title}
+      data-chat-description={description}
+      data-chat-prompt={`Explain this Ora page: ${title}${
+        description ? `. ${description}` : ""
+      }`}
+    >
       <div className="page-marker">{marker ?? "Ora"}</div>
       <div className="layout-row">
         <div>

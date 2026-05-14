@@ -19,7 +19,14 @@ export function ProductCardWidget({
   hint,
 }: ProductCardProps) {
   return (
-    <section className="chat-widget chat-widget-product">
+    <section
+      className="chat-widget chat-widget-product"
+      data-chat-explain="true"
+      data-chat-source="chat-widget"
+      data-chat-title={name}
+      data-chat-description={subtitle}
+      data-chat-prompt={`Explain this product widget for "${name}" and what I should look at next.`}
+    >
       {imageUrl ? (
         <img className="chat-widget-product-image" src={imageUrl} alt="" />
       ) : null}

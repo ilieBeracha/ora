@@ -2,7 +2,10 @@ import { z } from "zod";
 
 import { decryptSecret } from "@/lib/security/crypto";
 import { normalizeShopifyProduct } from "@/lib/shopify/product-mirror";
-import type { ShopifyProductMirrorInput } from "@/lib/shopify/types";
+import type {
+  ShopifyCustomerLifecycleInput,
+  ShopifyProductMirrorInput,
+} from "@/lib/shopify/types";
 
 const tokenResponseSchema = z.object({
   access_token: z.string(),
@@ -23,6 +26,26 @@ const shopInfoSchema = z.object({
 type ProductMirrorGraphqlResponse = {
   products: {
     edges: Array<{ cursor: string; node: Record<string, unknown> }>;
+    pageInfo: { hasNextPage: boolean; endCursor?: string | null };
+  };
+};
+
+type CustomerLifecycleGraphqlResponse = {
+  customers: {
+    edges: Array<{
+      cursor: string;
+      node: {
+        id: string;
+        email: string | null;
+        firstName: string | null;
+        lastName: string | null;
+        numberOfOrders: string | number;
+        amountSpent: { amount: string; currencyCode: string } | null;
+        createdAt: string;
+        updatedAt: string;
+        lastOrder: { id: string; name: string; createdAt: string } | null;
+      };
+    }>;
     pageInfo: { hasNextPage: boolean; endCursor?: string | null };
   };
 };
@@ -270,6 +293,59 @@ export async function fetchAllProducts({
   return products;
 }
 
+export async function fetchAllCustomers({
+  shopDomain,
+  authMethod,
+  encryptedAccessToken,
+  apiClientId,
+  encryptedApiClientSecret,
+  apiVersion,
+  limit = 1000,
+}: {
+  shopDomain: string;
+  authMethod?: "api_key" | "oauth";
+  encryptedAccessToken?: string | null;
+  apiClientId?: string | null;
+  encryptedApiClientSecret?: string | null;
+  apiVersion?: string | null;
+  limit?: number;
+}) {
+  const accessToken = await resolveShopifyAccessToken({
+    shopDomain,
+    authMethod,
+    encryptedAccessToken,
+    apiClientId,
+    encryptedApiClientSecret,
+  });
+  const customers: ShopifyCustomerLifecycleInput[] = [];
+  let cursor: string | null = null;
+
+  while (customers.length < limit) {
+    const data: CustomerLifecycleGraphqlResponse =
+      await shopifyGraphql<CustomerLifecycleGraphqlResponse>({
+        shopDomain,
+        accessToken,
+        apiVersion,
+        query: CUSTOMER_LIFECYCLE_QUERY,
+        variables: { cursor, first: Math.min(100, limit - customers.length) },
+      });
+
+    customers.push(
+      ...data.customers.edges.map(
+        (
+          edge: CustomerLifecycleGraphqlResponse["customers"]["edges"][number],
+        ) => normalizeShopifyCustomerForLifecycle(edge.node),
+      ),
+    );
+
+    if (!data.customers.pageInfo.hasNextPage) break;
+    cursor = data.customers.pageInfo.endCursor ?? null;
+    if (!cursor) break;
+  }
+
+  return customers;
+}
+
 export async function setProductReferenceMetafield({
   shopDomain,
   authMethod,
@@ -398,6 +474,30 @@ function defaultApiVersion() {
   return process.env.SHOPIFY_API_VERSION ?? "2026-04";
 }
 
+function normalizeShopifyCustomerForLifecycle(
+  customer: CustomerLifecycleGraphqlResponse["customers"]["edges"][number]["node"],
+): ShopifyCustomerLifecycleInput {
+  const orderCount = Number(customer.numberOfOrders) || 0;
+  const amount = Number(customer.amountSpent?.amount ?? 0) || 0;
+  const name =
+    [customer.firstName, customer.lastName].filter(Boolean).join(" ").trim() ||
+    null;
+
+  return {
+    shopifyCustomerId: customer.id,
+    email: customer.email,
+    name,
+    orderCount,
+    totalSpentCents: Math.round(amount * 100),
+    currency: customer.amountSpent?.currencyCode ?? "USD",
+    firstOrderAt: null,
+    lastOrderAt: customer.lastOrder?.createdAt
+      ? new Date(customer.lastOrder.createdAt)
+      : null,
+    rawJson: customer,
+  };
+}
+
 const PRODUCT_MIRROR_QUERY = /* GraphQL */ `
   query ProductMirror($first: Int!, $cursor: String) {
     products(first: $first, after: $cursor) {
@@ -427,6 +527,38 @@ const PRODUCT_MIRROR_QUERY = /* GraphQL */ `
                 value
               }
             }
+          }
+        }
+      }
+      pageInfo {
+        hasNextPage
+        endCursor
+      }
+    }
+  }
+`;
+
+const CUSTOMER_LIFECYCLE_QUERY = /* GraphQL */ `
+  query CustomerLifecycle($first: Int!, $cursor: String) {
+    customers(first: $first, after: $cursor, sortKey: UPDATED_AT) {
+      edges {
+        cursor
+        node {
+          id
+          email
+          firstName
+          lastName
+          numberOfOrders
+          amountSpent {
+            amount
+            currencyCode
+          }
+          createdAt
+          updatedAt
+          lastOrder {
+            id
+            name
+            createdAt
           }
         }
       }

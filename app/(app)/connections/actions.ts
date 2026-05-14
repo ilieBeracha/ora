@@ -177,7 +177,7 @@ export async function detectSignalsAction(formData: FormData) {
       data: {
         lastSignalDetectionAt: new Date(),
         lastSignalDetectionStatus: "completed",
-        lastSignalDetectionSignalCount: result.signalCount,
+        lastSignalDetectionSignalCount: result.signalCountWithLifecycle,
         lastSignalDetectionSummary: signalDetectionSummary(result),
         lastSignalDetectionError: null,
       },
@@ -204,9 +204,22 @@ function signalDetectionSummary(result: {
   activeGiftCards: number;
   activeProductFindings: number;
   activeProducts: number;
+  customerLifecycleError: string | null;
+  customerLifecycleSignals: number;
+  customersClassified: number;
+  customersFetched: number;
   draftCatalog: number;
+  lifecycleCounts: {
+    activeRepeatCount: number;
+    atRiskCount: number;
+    churnedCount: number;
+    highAovCount: number;
+    newCount: number;
+    vipCount: number;
+  } | null;
   productHealth: number;
   signalCount: number;
+  signalCountWithLifecycle: number;
   scannedProducts: number;
 }) {
   const activeCopy =
@@ -215,7 +228,7 @@ function signalDetectionSummary(result: {
       : `${result.activeProducts} active products`;
   const base = `Scanned ${result.scannedProducts} mirrored products. Found ${activeCopy}.`;
 
-  if (result.signalCount > 0) {
+  if (result.signalCountWithLifecycle > 0) {
     const parts = [
       result.productHealth
         ? `${result.productHealth} active-product pattern ${pluralize(
@@ -232,12 +245,27 @@ function signalDetectionSummary(result: {
             result.draftCatalog,
           )}`
         : null,
+      result.customerLifecycleSignals
+        ? `${result.customerLifecycleSignals} customer-lifecycle ${pluralize(
+            "Signal",
+            result.customerLifecycleSignals,
+          )} across ${result.customersClassified} purchasing ${pluralize(
+            "customer",
+            result.customersClassified,
+          )}`
+        : null,
     ].filter(Boolean);
+    const lifecycleNote = result.lifecycleCounts
+      ? ` Customer mix: ${result.lifecycleCounts.newCount} new, ${result.lifecycleCounts.activeRepeatCount} active repeat, ${result.lifecycleCounts.atRiskCount} at-risk, ${result.lifecycleCounts.churnedCount} churned.`
+      : "";
+    const errorNote = result.customerLifecycleError
+      ? ` Customer lifecycle scan failed: ${result.customerLifecycleError}`
+      : "";
 
-    return `${base} Found ${result.signalCount} ${pluralize(
+    return `${base} Found ${result.signalCountWithLifecycle} ${pluralize(
       "Signal",
-      result.signalCount,
-    )}${parts.length ? `: ${parts.join(", ")}.` : "."}`;
+      result.signalCountWithLifecycle,
+    )}${parts.length ? `: ${parts.join(", ")}.` : "."}${lifecycleNote}${errorNote}`;
   }
 
   if (
@@ -251,7 +279,11 @@ function signalDetectionSummary(result: {
     return `${base} Active-only detection found 0 eligible products, so no Signals were created.`;
   }
 
-  return `${base} No active products matched the current Signal rules. Found 0 Signals.`;
+  if (result.customerLifecycleError) {
+    return `${base} No product Signals were found. Customer lifecycle scan failed: ${result.customerLifecycleError}`;
+  }
+
+  return `${base} No products or customer groups matched the current Signal rules. Found 0 Signals.`;
 }
 
 function pluralize(label: string, count: number) {
@@ -288,6 +320,19 @@ export async function disconnectShopifyAction(formData: FormData) {
           }),
         ]
       : []),
+    prisma.signal.deleteMany({
+      where: {
+        companyId,
+        affectedObjectType: "customer_segment",
+        affectedObjectId: { startsWith: `customer_group:${connection.id}:` },
+      },
+    }),
+    prisma.customerGroup.deleteMany({
+      where: {
+        companyId,
+        groupKey: { startsWith: `customer_group:${connection.id}:` },
+      },
+    }),
     prisma.shopifyConnection.delete({ where: { id: connection.id } }),
   ]);
   await deleteConnector(companyId, "shopify");

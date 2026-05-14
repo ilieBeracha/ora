@@ -35,6 +35,15 @@ export default async function ActionsPage() {
             return (
               <article
                 className="panel panel-pad signal-card task-card signal-row"
+                data-chat-explain="true"
+                data-chat-source="action-card"
+                data-chat-title={action.signal.title}
+                data-chat-description={action.actionType.replaceAll("_", " ")}
+                data-chat-signal-id={action.signalId}
+                data-chat-action-plan-id={action.id}
+                data-chat-object-type="action_plan"
+                data-chat-object-id={action.id}
+                data-chat-prompt={`Explain this action history item for "${action.signal.title}" and what its approval, execution, and outcome mean.`}
                 key={action.id}
               >
                 <div className="task-primary">

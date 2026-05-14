@@ -98,6 +98,9 @@ enum RiskLevel {
 }
 
 enum ActionProvider {
+  klaviyo
+  meta
+  ora
   shopify
 }
 
@@ -156,6 +159,9 @@ model Company {
   invitations          Invitation[]
   shopifyConnections   ShopifyConnection[]
   connectorConnections ConnectorConnection[]
+  customerLifecycleProfiles CustomerLifecycleProfile[]
+  customerLifecycleSnapshots CustomerLifecycleSnapshot[]
+  customerGroups       CustomerGroup[]
   chatSessions         ChatSession[]
   signals              Signal[]
   createdAt            DateTime              @default(now())
@@ -240,6 +246,8 @@ model ShopifyConnection {
   updatedAt           DateTime                @updatedAt
 
   products            ProductMirror[]
+  customerLifecycleProfiles CustomerLifecycleProfile[]
+  customerLifecycleSnapshots CustomerLifecycleSnapshot[]
 
   @@unique([companyId, shopDomain])
   @@index([companyId, status])
@@ -289,6 +297,81 @@ model ProductMirror {
   @@index([mirroredAt])
 }
 
+model CustomerLifecycleProfile {
+  id                  String            @id @default(uuid())
+  companyId           String
+  company             Company           @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  shopifyConnectionId String
+  connection          ShopifyConnection @relation(fields: [shopifyConnectionId], references: [id], onDelete: Cascade)
+  shopifyCustomerId   String
+  email               String?
+  name                String?
+  lifecycleStage      String
+  lifecycleTags       String[]
+  orderCount          Int
+  totalSpentCents     Int
+  currency            String            @default("USD")
+  firstOrderAt        DateTime?
+  lastOrderAt         DateTime?
+  avgOrderValueCents  Int?
+  previousStage       String?
+  stageChangedAt      DateTime?
+  classifiedAt        DateTime
+  rawJson             Json?
+  createdAt           DateTime          @default(now())
+  updatedAt           DateTime          @updatedAt
+
+  @@unique([shopifyConnectionId, shopifyCustomerId])
+  @@index([companyId, lifecycleStage])
+  @@index([companyId, classifiedAt])
+  @@index([shopifyConnectionId, lifecycleStage])
+}
+
+model CustomerLifecycleSnapshot {
+  id                  String            @id @default(uuid())
+  companyId           String
+  company             Company           @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  shopifyConnectionId String
+  connection          ShopifyConnection @relation(fields: [shopifyConnectionId], references: [id], onDelete: Cascade)
+  sweepDate           String
+  totalCustomers      Int
+  newCount            Int
+  activeRepeatCount   Int
+  atRiskCount         Int
+  churnedCount        Int
+  vipCount            Int               @default(0)
+  highAovCount        Int               @default(0)
+  totalRevenueCents   Int               @default(0)
+  tagCountsJson       Json?
+  createdAt           DateTime          @default(now())
+
+  @@unique([shopifyConnectionId, sweepDate])
+  @@index([companyId, sweepDate])
+}
+
+model CustomerGroup {
+  id                    String   @id @default(uuid())
+  companyId             String
+  company               Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  signalId              String?
+  signal                Signal?  @relation(fields: [signalId], references: [id], onDelete: SetNull)
+  groupKey              String
+  name                  String
+  description           String   @db.Text
+  definitionJson        Json
+  membersJson           Json     @default("[]")
+  memberCount           Int      @default(0)
+  estimatedRevenueCents Int?
+  status                String   @default("ready")
+  builtAt               DateTime
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  @@unique([companyId, groupKey])
+  @@index([companyId, status])
+  @@index([signalId])
+}
+
 model Signal {
   id                 String             @id @default(uuid())
   companyId          String
@@ -310,6 +393,7 @@ model Signal {
   recommendations    Recommendation[]
   actionPlans        ActionPlan[]
   outcomes           Outcome[]
+  customerGroups     CustomerGroup[]
 
   @@unique([companyId, type, affectedObjectType, affectedObjectId])
   @@index([companyId, status, severity])

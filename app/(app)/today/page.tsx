@@ -35,6 +35,14 @@ export default async function TodayPage() {
           {signals.map((signal) => (
             <article
               className="panel panel-pad signal-card task-card signal-row"
+              data-chat-explain="true"
+              data-chat-source="signal-card"
+              data-chat-title={signal.title}
+              data-chat-description={signal.summary}
+              data-chat-signal-id={signal.id}
+              data-chat-object-type="signal"
+              data-chat-object-id={signal.id}
+              data-chat-prompt={`Explain this Signal: ${signal.title}. Why does it matter and what should I review first?`}
               key={signal.id}
             >
               <div className="task-primary">

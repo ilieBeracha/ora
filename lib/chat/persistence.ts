@@ -17,6 +17,15 @@ export type ChatSessionSnapshot = {
   messages: ChatClientMessage[];
 };
 
+export type ChatSessionListItem = {
+  id: string;
+  title: string;
+  preview: string;
+  messageCount: number;
+  createdAt: string;
+  updatedAt: string;
+};
+
 type ChatSessionScope = {
   companyId: string;
   userId: string;
@@ -83,13 +92,58 @@ export async function getLatestChatSnapshot(
   };
 }
 
+export async function listChatSessions(
+  scope: ChatSessionScope,
+  limit = 24,
+): Promise<ChatSessionListItem[]> {
+  const sessions = await prisma.chatSession.findMany({
+    where: {
+      companyId: scope.companyId,
+      userId: scope.userId,
+    },
+    orderBy: { updatedAt: "desc" },
+    take: limit,
+    include: {
+      _count: {
+        select: { messages: true },
+      },
+      messages: {
+        orderBy: { createdAt: "desc" },
+        select: {
+          body: true,
+          role: true,
+        },
+        take: 1,
+      },
+    },
+  });
+
+  return sessions.map((session) => {
+    const lastMessage = session.messages[0];
+    const preview = lastMessage?.body.trim().replace(/\s+/g, " ") ?? "";
+
+    return {
+      id: session.id,
+      title: session.title ?? "New chat",
+      preview: preview.slice(0, 120),
+      messageCount: session._count.messages,
+      createdAt: session.createdAt.toISOString(),
+      updatedAt: session.updatedAt.toISOString(),
+    };
+  });
+}
+
 export async function getConversationHistory(
   sessionId: string,
+  options: { limit?: number } = {},
 ): Promise<ConversationTurn[]> {
+  const limit = Math.max(0, Math.min(options.limit ?? 12, 12));
+  if (limit === 0) return [];
+
   const messages = await prisma.chatMessage.findMany({
     where: { sessionId },
     orderBy: { createdAt: "desc" },
-    take: 24,
+    take: limit * 2,
   });
 
   return messages
@@ -103,18 +157,24 @@ export async function getConversationHistory(
       }),
     }))
     .filter((turn) => turn.content.trim().length > 0)
-    .slice(-12);
+    .slice(-limit);
 }
 
 export async function recordUserChatMessage(
   sessionId: string,
   body: string,
 ) {
+  const session = await prisma.chatSession.findUnique({
+    where: { id: sessionId },
+    select: { title: true },
+  });
+
   await prisma.$transaction([
-    prisma.chatSession.updateMany({
-      where: { id: sessionId, title: null },
+    prisma.chatSession.update({
+      where: { id: sessionId },
       data: {
-        title: makeSessionTitle(body),
+        title: session?.title ?? makeSessionTitle(body),
+        updatedAt: new Date(),
       },
     }),
     prisma.chatMessage.create({
@@ -131,16 +191,22 @@ export async function recordAssistantChatMessage(
   sessionId: string,
   response: ConnectorAgentResponse,
 ) {
-  await prisma.chatMessage.create({
-    data: {
-      sessionId,
-      role: "assistant",
-      body: response.reply,
-      toolName: response.tools[0]?.toolName,
-      toolsJson: toJson(response.tools),
-      widgetsJson: toJson(response.widgets),
-    },
-  });
+  await prisma.$transaction([
+    prisma.chatSession.update({
+      where: { id: sessionId },
+      data: { updatedAt: new Date() },
+    }),
+    prisma.chatMessage.create({
+      data: {
+        sessionId,
+        role: "assistant",
+        body: response.reply,
+        toolName: response.tools[0]?.toolName,
+        toolsJson: toJson(response.tools),
+        widgetsJson: toJson(response.widgets),
+      },
+    }),
+  ]);
 }
 
 async function getClientMessages(sessionId: string) {

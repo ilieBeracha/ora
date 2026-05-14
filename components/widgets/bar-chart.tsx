@@ -19,7 +19,16 @@ export function BarChartWidget({
   const max = Math.max(...rows.map((row) => row.value), 1);
 
   return (
-    <section className="chat-widget chat-widget-bar-chart">
+    <section
+      className="chat-widget chat-widget-bar-chart"
+      data-chat-explain="true"
+      data-chat-source="chat-widget"
+      data-chat-title={title ?? "Bar chart"}
+      data-chat-description={`${rows.length} bars shown in this chart.`}
+      data-chat-prompt={`Explain this chart${
+        title ? `: ${title}` : ""
+      } and call out the main pattern.`}
+    >
       {title ? <div className="chat-widget-title">{title}</div> : null}
       <div className="chat-widget-bars">
         {rows.map((row) => (

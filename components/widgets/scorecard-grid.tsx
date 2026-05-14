@@ -9,7 +9,16 @@ type ScorecardGridProps = Extract<
 
 export function ScorecardGridWidget({ title, cards }: ScorecardGridProps) {
   return (
-    <section className="chat-widget chat-widget-scorecard">
+    <section
+      className="chat-widget chat-widget-scorecard"
+      data-chat-explain="true"
+      data-chat-source="chat-widget"
+      data-chat-title={title ?? "Scorecard"}
+      data-chat-description={`${cards.length} metrics shown in this scorecard.`}
+      data-chat-prompt={`Explain this scorecard${
+        title ? `: ${title}` : ""
+      } and tell me what matters most.`}
+    >
       {title ? <div className="chat-widget-title">{title}</div> : null}
       <div className="chat-widget-scorecard-grid">
         {cards.map((card) => (

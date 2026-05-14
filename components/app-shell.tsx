@@ -53,11 +53,20 @@ export async function AppShell({
 
         <div className="main-pane">
           <header className="topbar">
-            <div className="command-search" aria-label="Signal assistant search">
+            <button
+              className="command-search"
+              aria-label="Open Signal assistant"
+              data-chat-prevent-nav="true"
+              data-chat-prompt="Give me a concise snapshot of the store ecosystem from connected systems."
+              data-chat-source="topbar"
+              data-chat-title="Ask about your store"
+              data-chat-description="The topbar assistant entry opens chat for read-only questions across connected store systems."
+              type="button"
+            >
               <Mic size={18} aria-hidden="true" />
               <span>Ask about your store</span>
               <kbd>/</kbd>
-            </div>
+            </button>
 
             <nav className="signal-tabs" aria-label="Priority Signals">
               {topSignals.length === 0 ? (

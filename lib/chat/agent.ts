@@ -101,7 +101,9 @@ export async function answerWithConnectorAgent(
     };
   }
 
-  if (availableTools.length === 0) {
+  const hasLocalOraRecord = trimmed.includes("Local Ora Signal record.");
+
+  if (availableTools.length === 0 && !hasLocalOraRecord) {
     return {
       reply:
         "No connected read-only tools are available yet. Connect your commerce or marketing systems first, then Ora can answer from connector data.",
@@ -228,6 +230,10 @@ function buildInitialMessages(userMessage: string, history: ConversationTurn[]) 
         "You are Ora's connector agent for ecommerce operators.",
         `Today is ${new Date().toISOString().slice(0, 10)}.`,
         "Answer by choosing from the connected read-only tool catalog. Do not rely on fixed question mappings.",
+        "If the message includes a Local Ora Signal record, treat it as authoritative local Ora data for the current Signal. For questions about this Signal's action plan, approval, execution, status, or outcome, answer directly from that record before using connector tools. Do not ask for the Signal id when the record is present.",
+        "If the message includes Current Ora context, use it silently. Never say the user clicked, selected, opened, or is looking at a page unless the user asks about the UI itself.",
+        "For Signal context, answer in operator language: what the Signal likely means, what evidence matters, what data to inspect, and what safe next step is appropriate.",
+        "Keep the reply visually scannable. Do not write dense inline numbered paragraphs. Use short paragraphs plus widgets for lists, metrics, products, or next reads.",
         "Use prior conversation turns to resolve references like him, her, it, that product, those products, more data, or continue.",
         "You may call multiple tools if needed. Use broad API tools when a question needs data not covered by a narrow helper.",
         "Never mutate store data from chat. If the user asks to write/change/fix/apply anything, explain that approval is required.",
@@ -249,10 +255,12 @@ function buildInitialMessages(userMessage: string, history: ConversationTurn[]) 
         "After a successful tool result, answer the user directly instead of calling more tools unless the next tool is essential.",
         "Return JSON only with shape {\"reply\":\"...\",\"widgets\":[...]}",
         "Allowed widgets: kpi_card, scorecard_grid, stat_list, data_table, bar_chart, product_card, alert_card, followup_chips.",
-        "Use product_card for one product, bar_chart for rankings like top sellers, scorecard_grid for 2-8 headline metrics, data_table for detailed rows, alert_card for the main conclusion, followup_chips for useful next questions.",
+        "Use product_card for one product, bar_chart for rankings like top sellers, scorecard_grid for 2-8 headline metrics, data_table for detailed rows, alert_card for the main conclusion, followup_chips for the two most useful next questions.",
         "For any successful connector answer with rows, rankings, totals, products, orders, campaigns, flows, customers, profiles, or metric series, include 2-4 widgets when the tool result supports it.",
+        "For context-only Signal answers without connector tools, include an alert_card with the main takeaway and one followup_chips widget with exactly 2 next reads.",
         "Widget shape is strict: every widget must be {\"type\":\"...\",\"props\":{...}}. Never use a top-level data field inside a widget.",
         "Shape examples: kpi_card props {label,value,unit?,hint?}; scorecard_grid props {title?,cards:[{label,value,unit?,hint?}]}; stat_list props {title?,items:[{label,value}]}; data_table props {title?,columns:[{key,label,format?}],rows:[...]}; bar_chart props {title?,data:[...],xKey,yKey,valueFormat}; product_card props {name,subtitle?,price?,stock?,metrics?,hint?}; alert_card props {tone,title,body?}; followup_chips props {title?,prompts:[{label,prompt}]}.",
+        "When using followup_chips, include exactly 2 prompts. Do not create more than one followup_chips widget in an answer.",
         "Keep widgets small, factual, and backed by the tool results. Do not fabricate data.",
       ].join(" "),
     },
@@ -274,8 +282,16 @@ function sanitizeConversationHistory(history: ConversationTurn[]) {
     .slice(-8)
     .map((turn) => ({
       role: turn.role,
-      content: turn.content.trim().slice(0, 2000),
+      content: removeUiLeakPhrases(turn.content.trim()).slice(0, 2000),
     }));
+}
+
+function removeUiLeakPhrases(content: string) {
+  return content
+    .replace(/\bYou clicked on a Signal detail page\b/gi, "This Signal detail")
+    .replace(/\bYou clicked on\b/gi, "The current context is")
+    .replace(/\bwhat the user clicked\b/gi, "the current context")
+    .replace(/\bUI context\b/gi, "current context");
 }
 
 async function executeToolWithRecoverableError(
@@ -319,12 +335,18 @@ async function callOpenAI(
   signal?: AbortSignal,
 ) {
   throwIfCancelled(signal);
+  const toolFields =
+    tools.length > 0
+      ? {
+          tools,
+          tool_choice: "auto",
+        }
+      : {};
   const response = await fetchOpenAI(
     {
       model: runtimeEnv("ORA_CHAT_MODEL") ?? "gpt-4.1-mini",
       messages,
-      tools,
-      tool_choice: "auto",
+      ...toolFields,
       temperature: 0.1,
       response_format: { type: "json_object" },
     },

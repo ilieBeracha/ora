@@ -12,7 +12,14 @@ export function KpiCardWidget({
   hint,
 }: KpiCardProps) {
   return (
-    <section className="chat-widget chat-widget-kpi">
+    <section
+      className="chat-widget chat-widget-kpi"
+      data-chat-explain="true"
+      data-chat-source="chat-widget"
+      data-chat-title={label}
+      data-chat-description={hint}
+      data-chat-prompt={`Explain this KPI: ${label}.`}
+    >
       <div className="chat-widget-kpi-label">{label}</div>
       <div className="chat-widget-kpi-value">
         {formatWidgetValue(value, "number")}

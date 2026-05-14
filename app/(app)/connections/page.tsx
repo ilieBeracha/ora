@@ -9,7 +9,7 @@ import {
 } from "@/lib/connectors/klaviyo";
 import { getConnector, getConnectorConfig } from "@/lib/connectors/store";
 import { prisma } from "@/lib/db";
-import { formatDate } from "@/lib/format";
+import { formatDate, formatMoneyFromCents } from "@/lib/format";
 import {
   detectSignalsAction,
   disconnectKlaviyoAction,
@@ -28,7 +28,18 @@ export default async function ConnectionsPage() {
     prisma.shopifyConnection.findMany({
       where: { companyId: user.companyId, status: "connected" },
       orderBy: { connectedAt: "desc" },
-      include: { _count: { select: { products: true } } },
+      include: {
+        _count: {
+          select: {
+            customerLifecycleProfiles: true,
+            products: true,
+          },
+        },
+        customerLifecycleSnapshots: {
+          orderBy: { createdAt: "desc" },
+          take: 1,
+        },
+      },
     }),
     getConnector(user.companyId, "klaviyo"),
     getConnectorConfig<KlaviyoConfig>(user.companyId, "klaviyo"),
@@ -61,6 +72,13 @@ export default async function ConnectionsPage() {
           {connections.map((connection) => (
             <section
               className="panel panel-pad signal-card connection-card"
+              data-chat-explain="true"
+              data-chat-source="connection-card"
+              data-chat-title={connection.shopName ?? connection.shopDomain}
+              data-chat-description={`${connection._count.products} mirrored products. Status: ${connection.status}.`}
+              data-chat-prompt={`Explain this Shopify connection for "${
+                connection.shopName ?? connection.shopDomain
+              }" and what I should check next.`}
               key={connection.id}
             >
               <div className="connection-primary">
@@ -132,6 +150,13 @@ export default async function ConnectionsPage() {
                       {connection.lastSyncError}
                     </p>
                   ) : null}
+
+                  <LifecycleScanStatus
+                    classifiedCount={
+                      connection._count.customerLifecycleProfiles
+                    }
+                    snapshot={connection.customerLifecycleSnapshots[0] ?? null}
+                  />
                 </div>
 
                 {canManage ? (
@@ -181,7 +206,16 @@ export default async function ConnectionsPage() {
             </section>
           ))}
           {klaviyoConnection?.status === "connected" ? (
-            <section className="panel panel-pad signal-card connection-card">
+            <section
+              className="panel panel-pad signal-card connection-card"
+              data-chat-explain="true"
+              data-chat-source="connection-card"
+              data-chat-title={klaviyoConfig?.accountName ?? "Klaviyo"}
+              data-chat-description="Read-only lifecycle and customer data for chat."
+              data-chat-prompt={`Explain this Klaviyo connection for "${
+                klaviyoConfig?.accountName ?? "Klaviyo"
+              }" and what customer or lifecycle questions it can answer.`}
+            >
               <div className="connection-primary">
                 <div>
                   <div className="mb-2 flex flex-wrap items-center gap-2">
@@ -365,5 +399,87 @@ export default async function ConnectionsPage() {
         </details>
       ) : null}
     </>
+  );
+}
+
+function LifecycleScanStatus({
+  classifiedCount,
+  snapshot,
+}: {
+  classifiedCount: number;
+  snapshot: {
+    activeRepeatCount: number;
+    atRiskCount: number;
+    churnedCount: number;
+    createdAt: Date;
+    highAovCount: number;
+    newCount: number;
+    sweepDate: string;
+    totalCustomers: number;
+    totalRevenueCents: number;
+    vipCount: number;
+  } | null;
+}) {
+  if (!snapshot && classifiedCount === 0) {
+    return (
+      <div className="lifecycle-scan-panel">
+        <div>
+          <span className="fact-label">Customer lifecycle</span>
+          <strong>Not scanned yet</strong>
+        </div>
+        <p>
+          Run Detect Signals after Shopify customer permissions are available to
+          classify customer groups.
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="lifecycle-scan-panel">
+      <div className="lifecycle-scan-head">
+        <div>
+          <span className="fact-label">Customer lifecycle</span>
+          <strong>{classifiedCount} purchasing customers classified</strong>
+        </div>
+        {snapshot ? <StatusBadge status={`snapshot ${snapshot.sweepDate}`} /> : null}
+      </div>
+
+      {snapshot ? (
+        <>
+          <div className="lifecycle-mix-grid">
+            <LifecycleMetric label="New" value={snapshot.newCount} />
+            <LifecycleMetric
+              label="Active repeat"
+              value={snapshot.activeRepeatCount}
+            />
+            <LifecycleMetric label="At-risk" value={snapshot.atRiskCount} />
+            <LifecycleMetric label="Churned" value={snapshot.churnedCount} />
+            <LifecycleMetric label="VIP" value={snapshot.vipCount} />
+            <LifecycleMetric label="High AOV" value={snapshot.highAovCount} />
+          </div>
+          <p>
+            Customer lifecycle counts are scan evidence. Ora only creates a
+            customer Signal when a group is large or valuable enough to act on.
+            Last classified {formatDate(snapshot.createdAt)} ·{" "}
+            {formatMoneyFromCents(snapshot.totalRevenueCents)} lifetime spend.
+          </p>
+        </>
+      ) : (
+        <p>
+          Customer rows exist, but no lifecycle snapshot has been recorded yet.
+          Run Detect Signals again to refresh the lifecycle scan.
+        </p>
+      )}
+    </div>
+  );
+}
+
+function LifecycleMetric({ label, value }: { label: string; value: number }) {
+  return (
+    <div className="lifecycle-metric">
+      <span>{label}</span>
+      <strong>{value}</strong>
+    </div>
   );
 }
