@@ -80,6 +80,7 @@ const looseAgentOutputSchema = z.object({
 
 const mutationPattern =
   /\b(update|edit|set|create|delete|remove|publish|hide|archive|sync|refresh|detect|execute|approve|disconnect|fix|apply)\b/i;
+const currentOraContextMarker = "\n\nCurrent Ora context:";
 
 export async function answerWithConnectorAgent(
   message: string,
@@ -88,9 +89,18 @@ export async function answerWithConnectorAgent(
   options: ConnectorAgentOptions = {},
 ): Promise<ConnectorAgentResponse> {
   const trimmed = message.trim();
+  const userMessage = extractUserAuthoredMessage(trimmed);
+  const hasLocalOraRecord = hasLocalOraSignalRecord(trimmed);
+  const shouldUseConnectorTools = shouldUseConnectorToolsForMessage(trimmed);
   throwIfCancelled(options.signal);
-  options.onStatus?.("Checking connected read tools");
-  const availableTools = await getAvailableChatTools(ctx);
+  options.onStatus?.(
+    shouldUseConnectorTools
+      ? "Checking connected read tools"
+      : "Reading Signal record",
+  );
+  const availableTools = shouldUseConnectorTools
+    ? await getAvailableChatTools(ctx)
+    : [];
 
   if (!trimmed) {
     return {
@@ -101,8 +111,6 @@ export async function answerWithConnectorAgent(
     };
   }
 
-  const hasLocalOraRecord = trimmed.includes("Local Ora Signal record.");
-
   if (availableTools.length === 0 && !hasLocalOraRecord) {
     return {
       reply:
@@ -112,7 +120,7 @@ export async function answerWithConnectorAgent(
     };
   }
 
-  if (mutationPattern.test(trimmed)) {
+  if (mutationPattern.test(userMessage)) {
     return {
       reply:
         "Chat can only inspect connector data. Store changes must go through ActionPlan, Approval, Execution, and verification.",
@@ -139,6 +147,34 @@ export async function answerWithConnectorAgent(
   );
 }
 
+export function extractUserAuthoredMessage(message: string) {
+  return message.split(currentOraContextMarker)[0]?.trim() ?? message.trim();
+}
+
+export function hasLocalOraSignalRecord(message: string) {
+  return message.includes("Local Ora Signal record.");
+}
+
+export function shouldUseConnectorToolsForMessage(message: string) {
+  const userMessage = extractUserAuthoredMessage(message);
+
+  return (
+    !hasLocalOraSignalRecord(message) || wantsConnectedDataRead(userMessage)
+  );
+}
+
+export function wantsConnectedDataRead(message: string) {
+  return /\b(connected|live|shopify|klaviyo|source|raw|api)\s+(data|record|records|facts|evidence|read|reads)\b/i.test(
+    message,
+  ) ||
+    /\b(show|pull|fetch|read|inspect|check|validate|verify|compare|cross-check)\b[\s\S]{0,80}\b(data|records?|facts?|evidence|inventory|orders?|sales|customers?|products?|campaigns?|flows?)\b/i.test(
+      message,
+    ) ||
+    /\b(data|records?|facts?|evidence)\b[\s\S]{0,80}\b(behind|from|in)\b[\s\S]{0,80}\b(shopify|klaviyo|connected|source)\b/i.test(
+      message,
+    );
+}
+
 async function runOpenAIToolLoop(
   userMessage: string,
   availableTools: ConnectorTool[],
@@ -153,7 +189,11 @@ async function runOpenAIToolLoop(
   for (let iteration = 0; iteration < 5; iteration++) {
     throwIfCancelled(options.signal);
     options.onStatus?.(
-      iteration === 0 ? "Choosing connector tools" : "Reading tool results",
+      tools.length === 0
+        ? "Reading Signal record"
+        : iteration === 0
+          ? "Choosing connector tools"
+          : "Reading tool results",
     );
     const response = await callOpenAI(messages, tools, options.signal);
     const assistantMessage = response.choices?.[0]?.message;
@@ -230,7 +270,7 @@ function buildInitialMessages(userMessage: string, history: ConversationTurn[]) 
         "You are Ora's connector agent for ecommerce operators.",
         `Today is ${new Date().toISOString().slice(0, 10)}.`,
         "Answer by choosing from the connected read-only tool catalog. Do not rely on fixed question mappings.",
-        "If the message includes a Local Ora Signal record, treat it as authoritative local Ora data for the current Signal. For questions about this Signal's action plan, approval, execution, status, or outcome, answer directly from that record before using connector tools. Do not ask for the Signal id when the record is present.",
+        "If the message includes a Local Ora Signal record, treat it as authoritative local Ora data for the current Signal. For questions about this Signal's meaning, evidence, recommendation, action plan, approval, execution, status, or outcome, answer directly from that record. Do not ask for the Signal id when the record is present. Use connector tools for a Signal only when the user's own message explicitly asks for connected, live, source, Shopify, Klaviyo, or raw data.",
         "If the message includes Current Ora context, use it silently. Never say the user clicked, selected, opened, or is looking at a page unless the user asks about the UI itself.",
         "For Signal context, answer in operator language: what the Signal likely means, what evidence matters, what data to inspect, and what safe next step is appropriate.",
         "Keep the reply visually scannable. Do not write dense inline numbered paragraphs. Use short paragraphs plus widgets for lists, metrics, products, or next reads.",

@@ -80,6 +80,22 @@ type ChatOpenContext = {
 type AssistantSuggestion = {
   label: string;
   prompt: string;
+  detail?: string;
+};
+
+type AssistantFocusBriefContent = {
+  sourceLabel: string;
+  secondaryLabel: string | null;
+  actionTitle: string;
+  flow: [string, string, string];
+};
+
+type AssistantRailTarget = ChatOpenContext & {
+  key: string;
+  label: string;
+  detail: string;
+  prompt: string;
+  sourceLabel: string;
 };
 
 const chatSessionStorageKey = "ora-chat-session-id";
@@ -92,17 +108,17 @@ const contextModeOptions: Array<{
 }> = [
   {
     value: "focused",
-    label: "Recent chat",
+    label: "Recent",
     description: "Uses the current page and the last few messages.",
   },
   {
     value: "clean",
-    label: "No history",
+    label: "This page",
     description: "Uses the current page without earlier chat messages.",
   },
   {
     value: "thread",
-    label: "Full chat",
+    label: "Full thread",
     description: "Uses more of this chat session for follow-up questions.",
   },
 ];
@@ -118,7 +134,7 @@ const initialMessages: AssistantMessage[] = [
 export function AssistantChat() {
   const pathname = usePathname();
   const [messages, setMessages] = useState(initialMessages);
-  const [directMessages, setDirectMessages] = useState(initialMessages);
+  const [directMessages, setDirectMessages] = useState<AssistantMessage[]>([]);
   const [input, setInput] = useState("");
   const [isOpen, setIsOpen] = useState(false);
   const [pending, setPending] = useState(false);
@@ -126,20 +142,21 @@ export function AssistantChat() {
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [directSessionId, setDirectSessionId] = useState<string | null>(null);
   const [sessions, setSessions] = useState<ChatSessionListItem[]>([]);
+  const [isHistoryOpen, setIsHistoryOpen] = useState(false);
   const [contextMode, setContextMode] = useState<ChatContextMode>("focused");
   const [chatViewMode, setChatViewMode] = useState<ChatViewMode>("explore");
   const [mounted, setMounted] = useState(false);
   const [activeContext, setActiveContext] = useState<ChatOpenContext | null>(
     null,
   );
+  const [railTargets, setRailTargets] = useState<AssistantRailTarget[]>([]);
   const panelRef = useRef<HTMLElement>(null);
-  const formRef = useRef<HTMLFormElement>(null);
   const threadRef = useRef<HTMLDivElement>(null);
-  const pendingContextRef = useRef<ChatOpenContext | null>(null);
   const activeRunIdRef = useRef<string | null>(null);
   const activeChatScopeRef = useRef<ChatViewMode>("explore");
   const streamAbortRef = useRef<AbortController | null>(null);
   const cancelledRef = useRef(false);
+  const submittingRef = useRef(false);
   const isDirectMode = chatViewMode === "direct";
   const activeMessages = isDirectMode ? directMessages : messages;
   const pageContext = useMemo(() => buildPageContext(pathname), [pathname]);
@@ -153,7 +170,7 @@ export function AssistantChat() {
   const suggestionTitle = useMemo(
     () =>
       isDirectMode
-        ? "Ask next"
+        ? "Start with"
         : buildSuggestionTitle(messages),
     [isDirectMode, messages],
   );
@@ -162,16 +179,9 @@ export function AssistantChat() {
     () => buildContextActions(visibleContext),
     [visibleContext],
   );
-  const submitPrompt = useCallback(
-    (prompt: string, context?: ChatOpenContext | null) => {
-      if (pending) return;
-
-      pendingContextRef.current = context ?? null;
-      setIsOpen(true);
-      setInput(prompt);
-      requestAnimationFrame(() => formRef.current?.requestSubmit());
-    },
-    [pending],
+  const collapsedShortcuts = useMemo(
+    () => buildCollapsedShortcuts(visibleContext),
+    [visibleContext],
   );
   const openChatFromContextTarget = useCallback(
     (target: HTMLElement, event?: { preventDefault: () => void }) => {
@@ -189,14 +199,15 @@ export function AssistantChat() {
         defaultPrompt: prompt,
       };
 
-      setActiveContext(context);
       setIsOpen(true);
       if (context.source === "topbar") {
+        setActiveContext(null);
         setChatViewMode("explore");
       } else {
+        setActiveContext(context);
         setChatViewMode("direct");
         setDirectSessionId(null);
-        setDirectMessages([buildDirectIntroMessage(context)]);
+        setDirectMessages([]);
       }
 
       return true;
@@ -239,7 +250,30 @@ export function AssistantChat() {
 
   useEffect(() => {
     setActiveContext(null);
+    setChatViewMode("explore");
+    setIsHistoryOpen(false);
   }, [pathname]);
+
+  useEffect(() => {
+    if (isDirectMode) {
+      setIsHistoryOpen(false);
+    }
+  }, [isDirectMode]);
+
+  useEffect(() => {
+    if (!mounted) return undefined;
+
+    const updateRailTargets = () => {
+      setRailTargets(readRailTargets());
+    };
+    const frameId = window.requestAnimationFrame(updateRailTargets);
+    const timeoutId = window.setTimeout(updateRailTargets, 250);
+
+    return () => {
+      window.cancelAnimationFrame(frameId);
+      window.clearTimeout(timeoutId);
+    };
+  }, [mounted, pathname]);
 
   useEffect(() => {
     function targetIsInsidePanel(target: EventTarget | null) {
@@ -248,14 +282,16 @@ export function AssistantChat() {
 
     function handlePointerDown(event: PointerEvent) {
       if (getChatContextTarget(event.target)) return;
+      if (targetIsInsidePanel(event.target)) return;
 
-      setIsOpen(Boolean(targetIsInsidePanel(event.target)));
+      setIsOpen(false);
     }
 
     function handleFocusIn(event: FocusEvent) {
       if (getChatContextTarget(event.target)) return;
+      if (targetIsInsidePanel(event.target)) return;
 
-      setIsOpen(Boolean(targetIsInsidePanel(event.target)));
+      setIsOpen(false);
     }
 
     document.addEventListener("pointerdown", handlePointerDown);
@@ -324,12 +360,12 @@ export function AssistantChat() {
   function startNewChat() {
     if (pending) return;
 
-    pendingContextRef.current = null;
     setInput("");
     setIsOpen(true);
+    setIsHistoryOpen(false);
     if (isDirectMode) {
       setDirectSessionId(null);
-      setDirectMessages([buildDirectIntroMessage(visibleContext)]);
+      setDirectMessages([]);
     } else {
       setSessionId(null);
       setMessages(initialMessages);
@@ -338,11 +374,16 @@ export function AssistantChat() {
   }
 
   function selectSession(targetSessionId: string) {
-    if (pending || targetSessionId === sessionId) return;
+    if (pending) return;
+
+    setIsHistoryOpen(false);
+
+    if (targetSessionId === sessionId) return;
 
     setIsOpen(true);
     setChatViewMode("explore");
     setActiveContext(null);
+    setIsHistoryOpen(false);
     void loadSnapshot(targetSessionId);
   }
 
@@ -352,22 +393,33 @@ export function AssistantChat() {
   }
 
   function closeChat() {
+    setIsHistoryOpen(false);
     setIsOpen(false);
   }
 
-  function openExploreChat() {
+  function openRestingChat() {
     if (pending) return;
 
-    setActiveContext(null);
-    setChatViewMode("explore");
     setIsOpen(true);
   }
 
   async function submitMessage(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
-    const message = input.trim();
-    if (!message || pending) return;
+    await sendChatMessage(input);
+  }
+
+  function submitPrompt(prompt: string, context?: ChatOpenContext | null) {
+    void sendChatMessage(prompt, context);
+  }
+
+  async function sendChatMessage(
+    rawMessage: string,
+    contextOverride?: ChatOpenContext | null,
+  ) {
+    const message = rawMessage.trim();
+    if (!message || pending || submittingRef.current) return;
+
     const runScope = chatViewMode;
     const currentMessages =
       runScope === "direct" ? directMessages : messages;
@@ -382,9 +434,11 @@ export function AssistantChat() {
       body: message,
     };
     const history = buildConversationHistory(currentMessages);
-    const context = pendingContextRef.current ?? activeContext ?? pageContext;
+    const context = contextOverride ?? activeContext ?? pageContext;
 
+    submittingRef.current = true;
     activeChatScopeRef.current = runScope;
+    setIsOpen(true);
     appendMessage((current) => [...current, userMessage]);
     setInput("");
     setPending(true);
@@ -441,9 +495,9 @@ export function AssistantChat() {
         },
       ]);
     } finally {
+      submittingRef.current = false;
       setPending(false);
       setPendingLabel("Reading connected tools");
-      pendingContextRef.current = null;
       activeRunIdRef.current = null;
       streamAbortRef.current = null;
     }
@@ -462,6 +516,7 @@ export function AssistantChat() {
     }
 
     streamAbortRef.current?.abort();
+    submittingRef.current = false;
     setPending(false);
     activeRunIdRef.current = null;
     streamAbortRef.current = null;
@@ -482,9 +537,10 @@ export function AssistantChat() {
   function handleSuggestion(
     message: string,
     event?: MouseEvent<HTMLButtonElement>,
+    context?: ChatOpenContext | null,
   ) {
     event?.currentTarget.blur();
-    submitPrompt(message);
+    submitPrompt(message, context ?? (isDirectMode ? visibleContext : null));
   }
 
   function handleContextAction(
@@ -493,6 +549,40 @@ export function AssistantChat() {
   ) {
     event?.currentTarget.blur();
     submitPrompt(prompt, visibleContext);
+  }
+
+  function handleCollapsedShortcut(
+    prompt: string,
+    event?: MouseEvent<HTMLButtonElement>,
+  ) {
+    event?.currentTarget.blur();
+    submitPrompt(prompt, visibleContext);
+  }
+
+  function handleRailTarget(
+    target: AssistantRailTarget,
+    event?: MouseEvent<HTMLButtonElement>,
+  ) {
+    if (pending) return;
+
+    event?.currentTarget.blur();
+    const context: ChatOpenContext = {
+      source: target.source,
+      title: target.title ?? target.label,
+      description: target.description ?? target.detail,
+      defaultPrompt: target.prompt,
+      href: target.href,
+      signalId: target.signalId,
+      actionPlanId: target.actionPlanId,
+      objectType: target.objectType,
+      objectId: target.objectId,
+    };
+
+    setActiveContext(context);
+    setChatViewMode("direct");
+    setDirectSessionId(null);
+    setDirectMessages([]);
+    setIsOpen(true);
   }
 
   function handleChatStreamEvent(event: string, data: unknown) {
@@ -603,7 +693,11 @@ export function AssistantChat() {
   }
 
   const isExpanded = isOpen;
-  const showSuggestionCard = !latestAssistantHasFollowups(activeMessages);
+  const showStoreBrief = !isDirectMode && isStoreIntroState(activeMessages);
+  const showSuggestionCard =
+    !isDirectMode &&
+    !showStoreBrief &&
+    !latestAssistantHasFollowups(activeMessages);
   const panelClassName = [
     "assistant-panel",
     isExpanded ? "assistant-panel-active" : "",
@@ -617,28 +711,75 @@ export function AssistantChat() {
     : isDirectMode
     ? "Ask about this selection"
     : "Ask about your store";
+  const collapsedContextTitle = visibleContext.title ?? "current page";
+  const previewTarget = railTargets[0];
 
   const panel = (
     <aside
       aria-label="Signal assistant"
       className={panelClassName}
-      onClickCapture={() => setIsOpen(true)}
-      onFocusCapture={() => setIsOpen(true)}
-      onPointerDownCapture={() => setIsOpen(true)}
       ref={panelRef}
     >
-      <div className="assistant-handle" />
       {!isExpanded ? (
-        <button
-          aria-label="Open chat"
-          className="assistant-open-surface"
-          onClick={openExploreChat}
-          type="button"
-        />
+        <div className="assistant-collapsed">
+          <button
+            aria-label={`Open chat for ${collapsedContextTitle}`}
+            className="assistant-collapsed-trigger"
+            onClick={openRestingChat}
+            type="button"
+          >
+            <span className="assistant-collapsed-icon">
+              <MessageSquareText size={16} aria-hidden="true" />
+            </span>
+            <span className="assistant-collapsed-copy">
+              <strong>Ask Ora</strong>
+              <small>{collapsedContextTitle}</small>
+            </span>
+          </button>
+          <div className="assistant-collapsed-shortcuts" aria-label="Quick chat prompts">
+            <span>Quick asks</span>
+            {collapsedShortcuts.map((shortcut) => (
+              <button
+                disabled={pending}
+                key={`${shortcut.label}:${shortcut.prompt}`}
+                onClick={(event) =>
+                  handleCollapsedShortcut(shortcut.prompt, event)
+                }
+                type="button"
+              >
+                {shortcut.label}
+              </button>
+            ))}
+          </div>
+          {previewTarget ? (
+            <div
+              className="assistant-collapsed-preview"
+              aria-label="Chat preview"
+            >
+              <button
+                disabled={pending}
+                onClick={(event) => handleRailTarget(previewTarget, event)}
+                type="button"
+              >
+                <span className="assistant-preview-image" aria-hidden="true">
+                  <span />
+                  <span />
+                  <span />
+                </span>
+                <span className="assistant-preview-copy">
+                  <small>{previewTarget.sourceLabel} preview</small>
+                  <strong>{previewTarget.label}</strong>
+                  <em>{previewTarget.detail}</em>
+                </span>
+              </button>
+            </div>
+          ) : null}
+        </div>
       ) : null}
 
       {isExpanded ? (
         <>
+          <div className="assistant-handle" />
           <div className="assistant-panel-header">
             <div className="assistant-panel-heading">
               <div className="assistant-panel-title">
@@ -652,10 +793,57 @@ export function AssistantChat() {
             <div className="assistant-panel-actions">
               {!isDirectMode ? (
                 <>
+                  <div className="assistant-session-picker">
+                    <button
+                      aria-expanded={isHistoryOpen}
+                      aria-haspopup="menu"
+                      className="assistant-session-toggle"
+                      disabled={pending}
+                      onClick={() => setIsHistoryOpen((current) => !current)}
+                      type="button"
+                    >
+                      <History size={15} aria-hidden="true" />
+                      Chats
+                    </button>
+                    {isHistoryOpen ? (
+                      <div className="assistant-session-popover" role="menu">
+                        <div className="assistant-session-popover-head">
+                          <strong>Recent chats</strong>
+                          <span>{sessions.length}</span>
+                        </div>
+                        {sessions.length === 0 ? (
+                          <p>No saved chats yet.</p>
+                        ) : (
+                          sessions.slice(0, 8).map((session) => (
+                            <button
+                              aria-current={
+                                session.id === sessionId ? "true" : undefined
+                              }
+                              className="assistant-session-option"
+                              disabled={pending}
+                              key={session.id}
+                              onClick={() => selectSession(session.id)}
+                              role="menuitem"
+                              type="button"
+                            >
+                              <strong>
+                                {cleanChatDisplayCopy(session.title)}
+                              </strong>
+                              <span>
+                                {session.preview
+                                  ? cleanChatDisplayCopy(session.preview)
+                                  : "No messages yet"}
+                              </span>
+                            </button>
+                          ))
+                        )}
+                      </div>
+                    ) : null}
+                  </div>
                   <label className="assistant-memory-control">
-                    <span>Context</span>
+                    <span>Memory</span>
                     <select
-                      aria-label="Chat context"
+                      aria-label="Chat memory"
                       disabled={pending}
                       onChange={(event) =>
                         changeContextMode(event.target.value as ChatContextMode)
@@ -727,160 +915,135 @@ export function AssistantChat() {
         </>
       ) : null}
 
-      <div className="assistant-body">
-        {isExpanded && !isDirectMode ? (
-          <nav className="assistant-history" aria-label="Chat history">
-            <div className="assistant-history-heading">
-              <History size={16} aria-hidden="true" />
-              <span>History</span>
-            </div>
+      {isExpanded ? (
+        <div className="assistant-body">
+          <div className="assistant-conversation">
+            <div className="assistant-thread" aria-live="polite" ref={threadRef}>
+              {showStoreBrief ? (
+                <AssistantStoreBrief
+                  context={visibleContext}
+                  onPrompt={handleSuggestion}
+                  pending={pending}
+                />
+              ) : null}
 
-            <button
-              className="assistant-history-new"
-              disabled={pending}
-              onClick={startNewChat}
-              type="button"
-            >
-              <Plus size={15} aria-hidden="true" />
-              New chat
-            </button>
+              {isDirectMode ? (
+                <AssistantFocusBrief
+                  context={visibleContext}
+                  onPrompt={handleSuggestion}
+                  pending={pending}
+                  suggestions={suggestions}
+                />
+              ) : null}
 
-            <div className="assistant-history-list">
-              {sessions.length === 0 ? (
-                <p className="assistant-history-empty">No saved chats yet.</p>
-              ) : (
-                sessions.map((session) => (
-                  <button
-                    aria-current={session.id === sessionId ? "true" : undefined}
-                    className="assistant-history-item"
-                    disabled={pending}
-                    key={session.id}
-                    onClick={() => selectSession(session.id)}
-                    type="button"
-                  >
-                    <strong>{cleanChatDisplayCopy(session.title)}</strong>
-                    <span>
-                      {session.preview
-                        ? cleanChatDisplayCopy(session.preview)
-                        : "No messages yet"}
-                    </span>
-                    <small>
-                      {formatSessionTime(session.updatedAt)} ·{" "}
-                      {session.messageCount} messages
-                    </small>
-                  </button>
-                ))
-              )}
-            </div>
-          </nav>
-        ) : null}
+              {activeMessages
+                .filter(
+                  (message) => !(showStoreBrief && message.id === "intro"),
+                )
+                .map((message) =>
+                  message.role === "user" ? (
+                    <div className="assistant-message-user" key={message.id}>
+                      <div className="assistant-name">You</div>
+                      <p>{cleanChatDisplayCopy(message.body)}</p>
+                    </div>
+                  ) : (
+                    <div
+                      className="assistant-message assistant-message-system"
+                      key={message.id}
+                    >
+                      <MessageSquareText size={18} aria-hidden="true" />
+                      <div>
+                        <div className="assistant-name">
+                          Signal assistant
+                          {message.toolName ? (
+                            <span className="assistant-tool">
+                              {message.toolName}
+                            </span>
+                          ) : null}
+                        </div>
+                        <AssistantFormattedText
+                          text={cleanChatDisplayCopy(message.body)}
+                        />
+                        <WidgetList
+                          onPrompt={handleSuggestion}
+                          widgets={message.widgets ?? []}
+                        />
+                      </div>
+                    </div>
+                  ),
+                )}
 
-        <div className="assistant-conversation">
-          <div className="assistant-thread" aria-live="polite" ref={threadRef}>
-            {activeMessages.map((message) =>
-              message.role === "user" ? (
-                <div className="assistant-message-user" key={message.id}>
-                  <div className="assistant-name">You</div>
-                  <p>{cleanChatDisplayCopy(message.body)}</p>
-                </div>
-              ) : (
-                <div
-                  className="assistant-message assistant-message-system"
-                  key={message.id}
-                >
+              {showSuggestionCard ? (
+                <div className="assistant-card">
                   <MessageSquareText size={18} aria-hidden="true" />
                   <div>
-                    <div className="assistant-name">
-                      Signal assistant
-                      {message.toolName ? (
-                        <span className="assistant-tool">
-                          {message.toolName}
-                        </span>
-                      ) : null}
+                    <div className="assistant-name">{suggestionTitle}</div>
+                    <div className="assistant-suggestions">
+                      {suggestions.map((suggestion) => (
+                        <button
+                          disabled={pending}
+                          key={`${suggestion.label}:${suggestion.prompt}`}
+                          onClick={(event) =>
+                            handleSuggestion(suggestion.prompt, event)
+                          }
+                          type="button"
+                        >
+                          {suggestion.label}
+                        </button>
+                      ))}
                     </div>
-                    <AssistantFormattedText
-                      text={cleanChatDisplayCopy(message.body)}
-                    />
-                    <WidgetList
-                      onPrompt={handleSuggestion}
-                      widgets={message.widgets ?? []}
-                    />
                   </div>
                 </div>
-              ),
-            )}
+              ) : null}
 
-            {showSuggestionCard ? (
-              <div className="assistant-card">
-                <MessageSquareText size={18} aria-hidden="true" />
-                <div>
-                  <div className="assistant-name">{suggestionTitle}</div>
-                  <div className="assistant-suggestions">
-                    {suggestions.map((suggestion) => (
-                      <button
-                        disabled={pending}
-                        key={`${suggestion.label}:${suggestion.prompt}`}
-                        onClick={(event) =>
-                          handleSuggestion(suggestion.prompt, event)
-                        }
-                        type="button"
-                      >
-                        {suggestion.label}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              </div>
-            ) : null}
-
-            {pending ? (
-              <div className="assistant-message assistant-message-system assistant-loading">
-                <LoaderCircle
-                  className="assistant-loader-icon"
-                  size={18}
-                  aria-hidden="true"
-                />
-                <div>
-                  <div className="assistant-name">Signal assistant</div>
-                  <p>{pendingLabel}</p>
-                </div>
-              </div>
-            ) : null}
-          </div>
-
-          <form
-            action="/api/chat"
-            className="assistant-input"
-            onSubmit={submitMessage}
-            ref={formRef}
-          >
-            <input
-              aria-label={
-                isDirectMode
-                  ? "Ask about this selection"
-                  : "Ask about connected data"
-              }
-              disabled={pending}
-              onChange={(event) => setInput(event.target.value)}
-              placeholder={inputPlaceholder}
-              value={input}
-            />
-            <button
-              data-pending={pending ? "true" : undefined}
-              disabled={!pending && !input.trim()}
-              onClick={pending ? cancelPendingRun : undefined}
-              type={pending ? "button" : "submit"}
-              aria-label={pending ? "Stop response" : "Send message"}
-            >
               {pending ? (
-                <X size={17} aria-hidden="true" />
-              ) : (
-                <Search size={17} aria-hidden="true" />
-              )}
-            </button>
-          </form>
+                <div className="assistant-message assistant-message-system assistant-loading">
+                  <LoaderCircle
+                    className="assistant-loader-icon"
+                    size={18}
+                    aria-hidden="true"
+                  />
+                  <div>
+                    <div className="assistant-name">Signal assistant</div>
+                    <p>{pendingLabel}</p>
+                  </div>
+                </div>
+              ) : null}
+            </div>
+
+            <form
+              action="/api/chat"
+              className="assistant-input"
+              onSubmit={submitMessage}
+            >
+              <input
+                aria-label={
+                  isDirectMode
+                    ? "Ask about this selection"
+                    : "Ask about connected data"
+                }
+                disabled={pending}
+                onChange={(event) => setInput(event.target.value)}
+                placeholder={inputPlaceholder}
+                value={input}
+              />
+              <button
+                data-pending={pending ? "true" : undefined}
+                disabled={!pending && !input.trim()}
+                onClick={pending ? cancelPendingRun : undefined}
+                type={pending ? "button" : "submit"}
+                aria-label={pending ? "Stop response" : "Send message"}
+              >
+                {pending ? (
+                  <X size={17} aria-hidden="true" />
+                ) : (
+                  <Search size={17} aria-hidden="true" />
+                )}
+              </button>
+            </form>
+          </div>
         </div>
-      </div>
+      ) : null}
     </aside>
   );
 
@@ -906,10 +1069,10 @@ function buildPageContext(pathname: string): ChatOpenContext {
     return {
       source: "page",
       title: "Today",
-      description: "Top Signals that need attention now.",
+      description: "Durable patterns and concrete examples from active Signals.",
       href: pathname,
       defaultPrompt:
-        "Summarize the most important Signals and tell me which one deserves attention first.",
+        "Summarize the durable pattern in Today and the one Signal to review first.",
     };
   }
 
@@ -985,6 +1148,23 @@ function buildPageContext(pathname: string): ChatOpenContext {
 function buildContextActions(context: ChatOpenContext): AssistantSuggestion[] {
   const title = context.title ?? "this context";
 
+  if (context.href === "/actions" || context.title === "Actions") {
+    return [
+      {
+        label: "Needs approval",
+        prompt: "Which ActionPlans need approval, and what is blocking execution?",
+      },
+      {
+        label: "Ready to run",
+        prompt: "Which approved ActionPlans are ready to execute, and which are blocked?",
+      },
+      {
+        label: "Outcomes",
+        prompt: "Which executed ActionPlans still need outcome follow-up?",
+      },
+    ];
+  }
+
   return [
     {
       label: "Explain",
@@ -1003,35 +1183,505 @@ function buildContextActions(context: ChatOpenContext): AssistantSuggestion[] {
   ];
 }
 
-function buildDirectIntroMessage(context: ChatOpenContext): AssistantMessage {
-  const title = context.title ?? "this item";
+function buildCollapsedShortcuts(context: ChatOpenContext): AssistantSuggestion[] {
+  const title = context.title ?? "this context";
+  const isSelectedContext = context.source && context.source !== "page";
 
-  return {
-    id: `direct-${crypto.randomUUID()}`,
-    role: "assistant",
-    body: `Scoped to ${title}. Ask for the explanation, the evidence, or the next safe step.`,
-  };
-}
+  if (isSelectedContext) {
+    return buildDirectSuggestions(context).slice(0, 3);
+  }
 
-function buildDirectSuggestions(context: ChatOpenContext): AssistantSuggestion[] {
-  const title = context.title ?? "this item";
+  if (title === "Actions") {
+    return [
+      {
+        label: "Needs approval",
+        prompt: "Which ActionPlans need approval, and what should I open first?",
+      },
+      {
+        label: "Ready to run",
+        prompt: "Which ActionPlans can be executed now?",
+      },
+      {
+        label: "Blocked",
+        prompt: "Which ActionPlans are blocked, and what is the exact blocker?",
+      },
+    ];
+  }
+
+  if (title === "Today" || title === "Signal center") {
+    return [
+      {
+        label: "Top Signal",
+        prompt:
+          context.defaultPrompt ??
+          "Summarize the most important Signals and tell me which one deserves attention first.",
+      },
+      {
+        label: "Next step",
+        prompt: `What should I review next for ${title}? Keep it focused and practical.`,
+      },
+      {
+        label: "Data to check",
+        prompt: `What connected data should I inspect to validate ${title}?`,
+      },
+    ];
+  }
 
   return [
     {
       label: "Explain",
       prompt:
         context.defaultPrompt ??
-        `Explain ${title} in operator terms and keep it practical.`,
-    },
-    {
-      label: "Show data",
-      prompt: `Show the connected data behind ${title}. Keep only the facts needed to validate it.`,
+        `Summarize ${title} in operator terms. Do not talk about the UI.`,
     },
     {
       label: "Next step",
+      prompt: `What should I review next for ${title}? Keep it focused and practical.`,
+    },
+    {
+      label: "Data to check",
+      prompt: `What connected data should I inspect to validate ${title}?`,
+    },
+  ];
+}
+
+function readRailTargets(): AssistantRailTarget[] {
+  const elements = Array.from(
+    document.querySelectorAll<HTMLElement>(
+      "[data-chat-explain='true'][data-chat-title]",
+    ),
+  );
+  const targets: AssistantRailTarget[] = [];
+  const seen = new Set<string>();
+
+  for (const element of elements) {
+    if (element.closest(".assistant-panel")) continue;
+    if (shouldSkipRailTarget(element.dataset.chatSource)) continue;
+
+    const context = readChatContext(element);
+    const title = cleanChatDisplayCopy(context.title ?? "").trim();
+    if (!title) continue;
+
+    const dedupeKey =
+      context.objectId ??
+      context.signalId ??
+      [context.source, title].filter(Boolean).join(":");
+    const key = [
+      context.objectType,
+      context.objectId,
+      context.signalId,
+      context.source,
+      title,
+    ]
+      .filter(Boolean)
+      .join(":");
+
+    if (seen.has(dedupeKey)) continue;
+    seen.add(dedupeKey);
+
+    const prompt =
+      getChatContextPrompt(element) ??
+      `Explain ${title} in operator terms and keep it practical.`;
+    const detail = buildRailTargetDetail(context, element.dataset.chatSource);
+
+    targets.push({
+      ...context,
+      key,
+      label: title,
+      detail,
+      prompt,
+      sourceLabel: buildRailSourceLabel(element.dataset.chatSource),
+      defaultPrompt: prompt,
+    });
+
+    if (targets.length >= 6) break;
+  }
+
+  return targets;
+}
+
+function shouldSkipRailTarget(source: string | undefined) {
+  return (
+    source === "topbar" ||
+    source === "page-header" ||
+    source === "empty-state" ||
+    source === "chat-widget"
+  );
+}
+
+function buildRailTargetDetail(
+  context: ChatOpenContext,
+  source: string | undefined,
+) {
+  const description = cleanChatDisplayCopy(context.description ?? "").trim();
+
+  if (description) return truncateRailCopy(description);
+
+  if (source === "today-trend-card") return "Today insight";
+  if (source === "today-lead-insight") return "Main Today insight";
+  if (source === "today-memory-card") return "Concrete example";
+  if (source === "signal-card") return "Open Signal";
+  if (source === "action-card") return "Action status";
+  if (source === "signal-section") return "Signal detail";
+  if (source === "signal-lifecycle") return "Signal flow step";
+
+  return "Ask Ora about this";
+}
+
+function truncateRailCopy(value: string) {
+  const normalized = value.replace(/\s+/g, " ").trim();
+
+  return normalized.length > 74
+    ? `${normalized.slice(0, 71).trim()}...`
+    : normalized;
+}
+
+function buildRailSourceLabel(source: string | undefined) {
+  if (source === "today-trend-card") return "Trend";
+  if (source === "today-lead-insight") return "Main";
+  if (source === "today-memory-card") return "Signal";
+  if (source === "signal-card") return "Signal";
+  if (source === "action-card") return "Action";
+  if (source === "connection-card") return "Data";
+  if (source === "signal-section") return "Detail";
+  if (source === "signal-lifecycle") return "Step";
+  if (source === "signal-next-action") return "Next";
+  if (source === "signal-facts") return "Facts";
+  if (source === "signal-path-panel") return "Flow";
+
+  return "Ask";
+}
+
+function AssistantStoreBrief({
+  context,
+  onPrompt,
+  pending,
+}: {
+  context: ChatOpenContext;
+  onPrompt: (
+    prompt: string,
+    event?: MouseEvent<HTMLButtonElement>,
+    context?: ChatOpenContext | null,
+  ) => void;
+  pending: boolean;
+}) {
+  const title = cleanChatDisplayCopy(context.title ?? "Today");
+  const actions = buildStoreMountActions(context);
+
+  return (
+    <section className="assistant-store-brief" aria-label="Store chat brief">
+      <div className="assistant-store-brief-copy">
+        <span>Store chat</span>
+        <strong>{title}</strong>
+        <p>
+          Ask one focused question, then move the result into Signal review,
+          evidence, or the next approved action.
+        </p>
+      </div>
+
+      <div className="assistant-store-brief-actions">
+        {actions.map((action) => (
+          <button
+            disabled={pending}
+            key={`${action.label}:${action.prompt}`}
+            onClick={(event) => onPrompt(action.prompt, event, context)}
+            type="button"
+          >
+            <strong>{action.label}</strong>
+            <small>{action.detail}</small>
+          </button>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function buildStoreMountActions(context: ChatOpenContext) {
+  const title = context.title ?? "this page";
+
+  return [
+    {
+      label: "Review Today",
+      detail: "Find the Signal that deserves attention first.",
+      prompt:
+        context.defaultPrompt ??
+        "Summarize the durable pattern in Today and the one Signal to review first.",
+    },
+    {
+      label: "Find evidence",
+      detail: "Pull the facts behind the current operating pattern.",
+      prompt: `Show the evidence I should check for ${title}. Keep it tied to Signals.`,
+    },
+    {
+      label: "Next approval",
+      detail: "Identify the safest review or action-plan step.",
+      prompt: `What should I approve or review next for ${title}? Keep it inside the Signal flow.`,
+    },
+  ];
+}
+
+function AssistantFocusBrief({
+  context,
+  onPrompt,
+  pending,
+  suggestions,
+}: {
+  context: ChatOpenContext;
+  onPrompt: (
+    prompt: string,
+    event?: MouseEvent<HTMLButtonElement>,
+    context?: ChatOpenContext | null,
+  ) => void;
+  pending: boolean;
+  suggestions: AssistantSuggestion[];
+}) {
+  const title = cleanChatDisplayCopy(context.title ?? "This selection");
+  const description = cleanChatDisplayCopy(
+    context.description ??
+      "Ask for the explanation, the connected facts, or the safest next move.",
+  );
+  const brief = buildFocusBriefContent(context);
+
+  return (
+    <section className="assistant-focus-brief" aria-label="Focused chat brief">
+      <div className="assistant-focus-preview">
+        <div className="assistant-focus-meta">
+          <span>{brief.sourceLabel}</span>
+          {brief.secondaryLabel ? <small>{brief.secondaryLabel}</small> : null}
+        </div>
+        <div className="assistant-focus-copy">
+          <strong>{title}</strong>
+          <p>{description}</p>
+        </div>
+        <div className="assistant-focus-path" aria-label="Signal workflow">
+          {brief.flow.map((step) => (
+            <span key={step}>{step}</span>
+          ))}
+        </div>
+      </div>
+
+      <div className="assistant-focus-actions">
+        <div className="assistant-focus-actions-head">
+          <span>Ask next</span>
+          <strong>{brief.actionTitle}</strong>
+        </div>
+        {suggestions.slice(0, 3).map((suggestion) => (
+          <button
+            disabled={pending}
+            key={`${suggestion.label}:${suggestion.prompt}`}
+            onClick={(event) => onPrompt(suggestion.prompt, event, context)}
+            type="button"
+          >
+            <strong>{suggestion.label}</strong>
+            <small>{suggestion.detail ?? describeDirectSuggestion(suggestion.label)}</small>
+          </button>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function buildFocusBriefContent(
+  context: ChatOpenContext,
+): AssistantFocusBriefContent {
+  const kind = getDirectContextKind(context);
+  const sourceLabel = buildRailSourceLabel(context.source);
+
+  if (kind === "action_plan") {
+    return {
+      sourceLabel: "Action",
+      secondaryLabel: "Plan",
+      actionTitle: "Move the plan forward",
+      flow: ["Review", "Approve", "Execute"],
+    };
+  }
+
+  if (kind === "evidence") {
+    return {
+      sourceLabel,
+      secondaryLabel: context.signalId ? "Signal" : null,
+      actionTitle: "Check the proof",
+      flow: ["Facts", "Examples", "Decision"],
+    };
+  }
+
+  if (kind === "recommendation") {
+    return {
+      sourceLabel,
+      secondaryLabel: context.signalId ? "Signal" : null,
+      actionTitle: "Turn advice into a plan",
+      flow: ["Why", "Risk", "Plan"],
+    };
+  }
+
+  if (kind === "lifecycle") {
+    return {
+      sourceLabel: "Step",
+      secondaryLabel: context.signalId ? "Signal" : null,
+      actionTitle: "Understand this step",
+      flow: ["State", "Blocker", "Move"],
+    };
+  }
+
+  return {
+    sourceLabel,
+    secondaryLabel: context.signalId ? "Signal" : null,
+    actionTitle: "Choose a focused question",
+    flow: ["Signal", "Evidence", "Action"],
+  };
+}
+
+function describeDirectSuggestion(label: string) {
+  if (label === "Explain") return "Plain-language meaning and why it matters.";
+  if (label === "Show data") return "Connected facts behind this selection.";
+  if (label === "Next step") return "Safest review, approval, or follow-up.";
+
+  return "Ask about this selection.";
+}
+
+function buildDirectSuggestions(context: ChatOpenContext): AssistantSuggestion[] {
+  const title = context.title ?? "this item";
+  const kind = getDirectContextKind(context);
+
+  if (kind === "action_plan") {
+    return [
+      {
+        label: "Review plan",
+        detail: "What the plan will do and what it will not do.",
+        prompt: `Review this ActionPlan for ${title}. Tell me what it does, what it will not change automatically, and what must happen before execution.`,
+      },
+      {
+        label: "Approval",
+        detail: "Whether the exact payload can be locked.",
+        prompt: `Can this ActionPlan for ${title} be approved now? Explain the exact approval condition and any blocker.`,
+      },
+      {
+        label: "Execution",
+        detail: "Where the run step is blocked or ready.",
+        prompt: `Can this ActionPlan for ${title} be executed now? If not, give the exact blocker and the next click.`,
+      },
+    ];
+  }
+
+  if (kind === "evidence") {
+    return [
+      {
+        label: "Key facts",
+        detail: "Summarize the proof without repeated text.",
+        prompt: `Summarize the key evidence for ${title}. Group repeated records and keep only the facts that prove or weaken the Signal.`,
+      },
+      {
+        label: "Examples",
+        detail: "Show concrete affected products or records.",
+        prompt: `Show the concrete examples behind ${title}. Keep the list short and explain why each example matters.`,
+      },
+      {
+        label: "Validate",
+        detail: "What connected data should confirm it.",
+        prompt: `What connected data should I check to validate the evidence for ${title}?`,
+      },
+    ];
+  }
+
+  if (kind === "recommendation") {
+    return [
+      {
+        label: "Why this",
+        detail: "Reasoning, risk, and expected impact.",
+        prompt: `Explain why this recommendation is the right move for ${title}. Include risk and confidence.`,
+      },
+      {
+        label: "Plan from it",
+        detail: "How it becomes one exact action.",
+        prompt: `How should this recommendation become an ActionPlan for ${title}? Keep it to one exact operator action.`,
+      },
+      {
+        label: "Risk check",
+        detail: "What could go wrong before approval.",
+        prompt: `What should I check before approving work based on this recommendation for ${title}?`,
+      },
+    ];
+  }
+
+  if (kind === "lifecycle") {
+    return [
+      {
+        label: "Current state",
+        detail: "What this workflow step means now.",
+        prompt: `Explain the current ${title} step in the Signal flow and what state it is in.`,
+      },
+      {
+        label: "Blocker",
+        detail: "The thing preventing the next step.",
+        prompt: `What blocks the ${title} step from moving forward? Be specific.`,
+      },
+      {
+        label: "Move forward",
+        detail: "The next concrete operator action.",
+        prompt: `What is the next concrete move for the ${title} step? Include approval or execution constraints if relevant.`,
+      },
+    ];
+  }
+
+  return [
+    {
+      label: "Explain",
+      detail: "Plain-language meaning and why it matters.",
+      prompt:
+        context.defaultPrompt ??
+        `Explain ${title} in operator terms and keep it practical.`,
+    },
+    {
+      label: "Evidence",
+      detail: "Facts that prove or weaken this.",
+      prompt: `Show the connected data behind ${title}. Keep only the facts needed to validate it.`,
+    },
+    {
+      label: "Next action",
+      detail: "The safest review, approval, or run step.",
       prompt: `What is the next safe step for ${title}? Include approval or execution constraints if relevant.`,
     },
   ];
+}
+
+function getDirectContextKind(context: ChatOpenContext) {
+  const source = context.source ?? "";
+  const objectType = context.objectType ?? "";
+  const title = (context.title ?? "").toLowerCase();
+
+  if (
+    objectType === "action_plan" ||
+    source === "action-card" ||
+    title.includes("action plan")
+  ) {
+    return "action_plan";
+  }
+
+  if (
+    source === "signal-facts" ||
+    (source === "signal-section" && title.includes("evidence")) ||
+    (source === "signal-section" && title.includes("what happened"))
+  ) {
+    return "evidence";
+  }
+
+  if (objectType === "recommendation" || title.includes("recommended")) {
+    return "recommendation";
+  }
+
+  if (
+    objectType === "signal_lifecycle_step" ||
+    objectType === "signal_path_step" ||
+    objectType === "signal_mutation_path" ||
+    objectType === "next_action" ||
+    source === "signal-lifecycle" ||
+    source === "signal-path-panel" ||
+    source === "signal-next-action"
+  ) {
+    return "lifecycle";
+  }
+
+  return "signal";
 }
 
 function getChatContextTarget(target: EventTarget | null) {
@@ -1092,18 +1742,6 @@ function getSignalIdFromPathname(pathname: string) {
   const match = pathname.match(/^\/signals\/([^/?#]+)/);
 
   return match?.[1] ? decodeURIComponent(match[1]) : null;
-}
-
-function formatSessionTime(value: string) {
-  const date = new Date(value);
-  const now = new Date();
-  const sameDay = date.toDateString() === now.toDateString();
-
-  return new Intl.DateTimeFormat(undefined, {
-    hour: "numeric",
-    minute: "2-digit",
-    ...(sameDay ? {} : { month: "short", day: "numeric" }),
-  }).format(date);
 }
 
 function AssistantFormattedText({ text }: { text: string }) {
@@ -1218,6 +1856,10 @@ function latestAssistantHasFollowups(messages: AssistantMessage[]) {
   return Boolean(
     latestAssistant?.widgets?.some((widget) => widget.type === "followup_chips"),
   );
+}
+
+function isStoreIntroState(messages: AssistantMessage[]) {
+  return messages.length === 1 && messages[0]?.id === "intro";
 }
 
 function buildContextualSuggestions(

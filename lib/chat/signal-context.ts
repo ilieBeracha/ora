@@ -161,7 +161,11 @@ export function buildSignalStatusWidgets(signal: SignalChatRecord): ChatWidget[]
             value: approval ? "Approved" : "Not approved",
             hint: approval
               ? `Approved ${formatDateForChat(approval.approvedAt)}`
-              : "Required before mutation",
+              : actionPlan?.status === "approval_required"
+                ? "Required before mutation"
+                : actionPlan
+                  ? "Review the draft plan first"
+                  : "No action plan prepared yet",
           },
           {
             label: "Execution",

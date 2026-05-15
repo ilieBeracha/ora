@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { decideUserSync } from "@/lib/auth/user-sync";
 
 describe("user sync decisions", () => {
-  it("starts an uninvited user as an admin who needs company onboarding", () => {
+  it("lets the first uninvited user bootstrap company onboarding", () => {
     expect(decideUserSync({ existingUserCount: 0 })).toEqual({
       role: "admin",
       invitedByUserId: null,
@@ -31,18 +31,12 @@ describe("user sync decisions", () => {
     });
   });
 
-  it("lets later uninvited users create their own company instead of joining", () => {
+  it("blocks later uninvited users from creating another company", () => {
     expect(
       decideUserSync({
         existingUserCount: 1,
         pendingInvitation: null,
       }),
-    ).toEqual({
-      role: "admin",
-      invitedByUserId: null,
-      companyId: null,
-      invitationAccepted: false,
-      needsCompanyOnboarding: true,
-    });
+    ).toBeNull();
   });
 });

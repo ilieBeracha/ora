@@ -36,7 +36,7 @@ export function decideUserSync(params: {
     companyId?: string | null;
     invitedBy?: { companyId: string | null } | null;
   } | null;
-}): UserSyncDecision {
+}): UserSyncDecision | null {
   if (params.pendingInvitation) {
     return {
       role: "member",
@@ -48,6 +48,10 @@ export function decideUserSync(params: {
       invitationAccepted: true,
       needsCompanyOnboarding: false,
     };
+  }
+
+  if (params.existingUserCount > 0) {
+    return null;
   }
 
   return {
@@ -100,6 +104,10 @@ export async function syncWorkOSUser(workosUser: WorkOSUser) {
     existingUserCount,
     pendingInvitation,
   });
+
+  if (!decision) {
+    throw new UserNotInvitedError(workosUser.email);
+  }
 
   const user = await prisma.user.create({
     data: {

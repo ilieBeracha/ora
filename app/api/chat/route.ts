@@ -90,7 +90,10 @@ export async function POST(request: Request) {
     if (!user.companyId) {
       throw new Error("Create a company before using connected tools.");
     }
-    const parsed = chatRequestSchema.parse(await request.json());
+    const parsed = addRefererSignalContext(
+      chatRequestSchema.parse(await request.json()),
+      request,
+    );
     const chatUser = {
       id: user.id,
       companyId: user.companyId,
@@ -115,6 +118,48 @@ export async function POST(request: Request) {
       { status: 200 },
     );
   }
+}
+
+function addRefererSignalContext(parsed: ChatRequest, request: Request): ChatRequest {
+  const refererPath = getSameOriginPath(request.headers.get("referer"));
+  if (!refererPath) return parsed;
+
+  const signalId = getSignalIdFromPath(refererPath);
+  if (!signalId) return parsed;
+  if (parsed.context?.signalId || parsed.context?.href?.startsWith("/signals/")) {
+    return parsed;
+  }
+
+  return {
+    ...parsed,
+    context: {
+      ...(parsed.context ?? {}),
+      source: parsed.context?.source ?? "signal-page",
+      title: parsed.context?.title ?? "Signal detail",
+      href: refererPath,
+      signalId,
+      objectType: parsed.context?.objectType ?? "signal",
+      objectId: parsed.context?.objectId ?? signalId,
+    },
+  };
+}
+
+function getSameOriginPath(referer: string | null) {
+  if (!referer) return null;
+
+  try {
+    const url = new URL(referer);
+
+    return `${url.pathname}${url.search}`;
+  } catch {
+    return null;
+  }
+}
+
+function getSignalIdFromPath(path: string) {
+  const match = path.match(/^\/signals\/([^/?#]+)/);
+
+  return match?.[1] ? decodeURIComponent(match[1]) : null;
 }
 
 async function runChatTurn(

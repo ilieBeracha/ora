@@ -36,6 +36,9 @@ type EvidenceExample = {
   hasImage: boolean | null;
 };
 
+type SignalDetail = NonNullable<Awaited<ReturnType<typeof getSignalDetail>>>;
+type SignalEvidence = SignalDetail["evidence"][number];
+
 type CustomerMemberExample = {
   shopifyCustomerId: string;
   email: string | null;
@@ -69,10 +72,17 @@ export default async function SignalDetailPage({
   const latestOutcome = signal.outcomes[0] ?? actionPlan?.outcomes[0];
   const canManage = canManageApp(user.role);
   const canExecutePlan = isExecutableActionPlan(actionPlan);
+  const canApprovePlan = isApprovableActionPlan(actionPlan);
   const evidencePayload = getPrimaryEvidencePayload(
     signal.evidence.map((item) => item.rawPayload),
   );
   const evidenceExamples = parseEvidenceExamples(evidencePayload?.examples);
+  const evidenceFacts = buildEvidenceFacts(signal.evidence);
+  const evidenceProviders = uniqueValues(
+    signal.evidence.map((item) => item.provider),
+  );
+  const topEvidenceReason = getTopEvidenceReason(evidenceExamples);
+  const latestEvidenceObservedAt = getLatestEvidenceObservedAt(signal.evidence);
   const customerMembers = parseCustomerMembers(customerGroup?.membersJson);
   const detectedCount = numberValue(evidencePayload?.count);
   const affectedCount = customerGroup?.memberCount ?? detectedCount;
@@ -107,9 +117,19 @@ export default async function SignalDetailPage({
     },
     {
       label: "Approval",
-      detail: actionPlan?.approval ? "Approved" : "Required",
+      detail: actionPlan?.approval
+        ? "Approved"
+        : canApprovePlan
+          ? "Required"
+          : actionPlan
+            ? "Review first"
+            : "Required",
       icon: ShieldCheck,
-      state: actionPlan?.approval ? "complete" : actionPlan ? "current" : "waiting",
+      state: actionPlan?.approval
+        ? "complete"
+        : canApprovePlan
+          ? "current"
+          : "waiting",
     },
     {
       label: "Execution",
@@ -157,7 +177,7 @@ export default async function SignalDetailPage({
           data-chat-object-id={signal.id}
           data-chat-prompt={`Explain this Signal detail: ${signal.title}. Summarize what matters and what I should inspect next.`}
         >
-          <ChatOpenButton label="Open Signal summary in chat" />
+          <ChatOpenButton label="Open Signal summary in chat" hint="Signal summary" />
           <div className="signal-hero-main">
             <div className="signal-hero-badges">
               <SeverityBadge severity={signal.severity} />
@@ -216,7 +236,10 @@ export default async function SignalDetailPage({
                 data-chat-prompt={`Explain the ${item.label} step for this Signal: ${signal.title}. Current state: ${item.detail}.`}
                 key={item.label}
               >
-                <ChatOpenButton label={`Open ${item.label} step in chat`} />
+                <ChatOpenButton
+                  label={`Open ${item.label} step in chat`}
+                  hint={`${item.label} step`}
+                />
                 <span className="signal-lifecycle-icon">
                   <Icon size={16} aria-hidden="true" />
                 </span>
@@ -286,23 +309,79 @@ export default async function SignalDetailPage({
                 label="Evidence"
                 title="Observed facts behind the Signal"
               />
-              <div className="evidence-visual-grid">
-                {signal.evidence.map((evidence) => (
-                  <article className="evidence-panel" key={evidence.id}>
-                    <div className="evidence-panel-top">
+              <div className="evidence-overview-grid">
+                <EvidenceMetric
+                  label="Detected"
+                  value={
+                    affectedCount
+                      ? String(affectedCount)
+                      : String(signal.evidence.length)
+                  }
+                  hint={affectedLabel(signal.affectedObjectType)}
+                />
+                <EvidenceMetric
+                  label="Unique facts"
+                  value={String(evidenceFacts.length)}
+                  hint={`${signal.evidence.length} evidence record${
+                    signal.evidence.length === 1 ? "" : "s"
+                  }`}
+                />
+                <EvidenceMetric
+                  label="Top blocker"
+                  value={
+                    topEvidenceReason
+                      ? titleCase(topEvidenceReason.reason)
+                      : "Not tagged"
+                  }
+                  hint={
+                    topEvidenceReason
+                      ? `${topEvidenceReason.count} example${
+                          topEvidenceReason.count === 1 ? "" : "s"
+                        }`
+                      : "No example reasons"
+                  }
+                />
+                <EvidenceMetric
+                  label="Source"
+                  value={
+                    evidenceProviders.length
+                      ? evidenceProviders.map(titleCase).join(", ")
+                      : "Unknown"
+                  }
+                  hint={
+                    latestEvidenceObservedAt
+                      ? `Observed ${formatDate(latestEvidenceObservedAt)}`
+                      : "No observation date"
+                  }
+                />
+              </div>
+
+              <div className="evidence-fact-board">
+                <div className="evidence-fact-board-head">
+                  <h3>Key facts</h3>
+                  <span>Grouped to remove repeated records</span>
+                </div>
+                <div className="evidence-fact-list">
+                  {evidenceFacts.map((fact) => (
+                    <article className="evidence-fact-card" key={fact.key}>
+                      <div className="evidence-fact-count">
+                        {String(fact.count).padStart(2, "0")}
+                      </div>
                       <div>
-                        <p className="kicker">{titleCase(evidence.evidenceType)}</p>
-                        <p>{evidence.displayText}</p>
+                        <div className="evidence-fact-top">
+                          <h4>{fact.title}</h4>
+                          <div className="evidence-fact-badges">
+                            {fact.providers.map((provider) => (
+                              <StatusBadge key={provider} status={provider} />
+                            ))}
+                            <span>{formatDate(fact.observedAt)}</span>
+                          </div>
+                        </div>
+                        <p>{fact.summary}</p>
                       </div>
-                      <div className="evidence-badge-stack">
-                        <StatusBadge status={evidence.provider} />
-                        <span className="muted text-sm">
-                          {formatDate(evidence.observedAt)}
-                        </span>
-                      </div>
-                    </div>
-                  </article>
-                ))}
+                    </article>
+                  ))}
+                </div>
               </div>
 
               {evidenceExamples.length ? (
@@ -311,7 +390,7 @@ export default async function SignalDetailPage({
                     <h3>Example products</h3>
                     <span>{evidenceExamples.length} shown from evidence</span>
                   </div>
-                  <div className="signal-example-list">
+                  <div className="signal-example-list evidence-example-grid">
                     {evidenceExamples.map((example, index) => (
                       <article
                         className="signal-example-row"
@@ -338,6 +417,13 @@ export default async function SignalDetailPage({
                               {example.descriptionLength == null
                                 ? "Copy unknown"
                                 : `${example.descriptionLength} copy chars`}
+                            </span>
+                            <span>
+                              {example.hasImage == null
+                                ? "Image unknown"
+                                : example.hasImage
+                                  ? "Image present"
+                                  : "No image"}
                             </span>
                           </div>
                           {example.reasons.length ? (
@@ -523,12 +609,18 @@ export default async function SignalDetailPage({
                       <StatusBadge status={actionPlan.status} />
                       <StatusBadge status={actionPlan.provider} />
                     </div>
+                    <ActionPlanProgress
+                      actionPlan={actionPlan}
+                      canExecutePlan={canExecutePlan}
+                      latestExecution={latestExecution}
+                    />
+                    <ActionPlanPlainSummary actionPlan={actionPlan} />
                     <div className="signal-plan-preview">
                       <FactMini label="Created" value={formatDate(actionPlan.createdAt)} />
                       <FactMini label="Updated" value={formatDate(actionPlan.updatedAt)} />
                     </div>
                     <details className="payload-details">
-                      <summary>Preview exact payload</summary>
+                      <summary>Technical payload</summary>
                       <pre>{JSON.stringify(actionPlan.previewPayload, null, 2)}</pre>
                     </details>
                   </>
@@ -561,11 +653,23 @@ export default async function SignalDetailPage({
               <div className="signal-path-grid">
                 <PathPanel
                   label="Approval"
-                  status={actionPlan?.approval ? "approved" : "required"}
+                  status={
+                    actionPlan?.approval
+                      ? "approved"
+                      : canApprovePlan
+                        ? "required"
+                        : actionPlan
+                          ? "review draft"
+                          : "not ready"
+                  }
                   body={
                     actionPlan?.approval
                       ? `Approved on ${formatDate(actionPlan.approval.approvedAt)}.`
-                      : "Approval locks the exact execution payload before any connected system can be changed."
+                      : canApprovePlan
+                        ? "Approval locks the exact execution payload before any connected system can be changed."
+                        : actionPlan
+                          ? "Ora prepared a deterministic review batch. Choose the exact operator action before approval or execution."
+                          : "Approval starts after Ora prepares an exact action plan."
                   }
                   footnote={
                     actionPlan?.approval
@@ -616,6 +720,7 @@ export default async function SignalDetailPage({
                 Boolean(actionPlan?.approval),
                 Boolean(latestExecution),
                 canExecutePlan,
+                canApprovePlan,
               )}
               data-chat-signal-id={signal.id}
               data-chat-action-plan-id={actionPlan?.id}
@@ -623,7 +728,7 @@ export default async function SignalDetailPage({
               data-chat-object-id={actionPlan?.id ?? signal.id}
               data-chat-prompt={`Explain the next action for this Signal: ${signal.title}.`}
             >
-              <ChatOpenButton label="Open next action in chat" />
+                <ChatOpenButton label="Open next action in chat" hint="Next action" />
               <div className="signal-next-icon">
                 <Gauge size={18} aria-hidden="true" />
               </div>
@@ -635,6 +740,7 @@ export default async function SignalDetailPage({
                     Boolean(actionPlan?.approval),
                     Boolean(latestExecution),
                     canExecutePlan,
+                    canApprovePlan,
                   )}
                 </h2>
                 <p>
@@ -643,11 +749,12 @@ export default async function SignalDetailPage({
                     Boolean(actionPlan?.approval),
                     Boolean(latestExecution),
                     canExecutePlan,
+                    canApprovePlan,
                   )}
                 </p>
               </div>
 
-              {actionPlan && !actionPlan.approval && canManage ? (
+              {actionPlan && !actionPlan.approval && canManage && canApprovePlan ? (
                 <form action={approveActionPlanAction}>
                   <input type="hidden" name="actionPlanId" value={actionPlan.id} />
                   <input
@@ -656,7 +763,7 @@ export default async function SignalDetailPage({
                     value="Approved in Ora Signal detail UI."
                   />
                   <button className="button button-primary" type="submit">
-                    Approve exact action
+                    Approve plan
                   </button>
                 </form>
               ) : null}
@@ -668,7 +775,7 @@ export default async function SignalDetailPage({
                 <form action={executeActionPlanAction}>
                   <input type="hidden" name="actionPlanId" value={actionPlan.id} />
                   <button className="button button-primary" type="submit">
-                    Execute approved action
+                    {executionButtonLabel(actionPlan)}
                   </button>
                 </form>
               ) : null}
@@ -701,7 +808,7 @@ export default async function SignalDetailPage({
               data-chat-object-id={signal.id}
               data-chat-prompt={`Explain the facts and metadata for this Signal: ${signal.title}.`}
             >
-              <ChatOpenButton label="Open Signal facts in chat" />
+              <ChatOpenButton label="Open Signal facts in chat" hint="Signal facts" />
               <h2 className="section-title">Signal facts</h2>
               <dl>
                 <FactRow label="Type" value={titleCase(signal.type)} />
@@ -764,8 +871,26 @@ function SectionHeader({
         <p className="kicker">{label}</p>
         <h2>{title}</h2>
       </div>
-      <ChatOpenButton label={`Open ${label} in chat`} />
+      <ChatOpenButton label={`Open ${label} in chat`} hint={label} />
     </header>
+  );
+}
+
+function EvidenceMetric({
+  label,
+  value,
+  hint,
+}: {
+  label: string;
+  value: string;
+  hint: string;
+}) {
+  return (
+    <div className="evidence-metric">
+      <span>{label}</span>
+      <strong>{value}</strong>
+      <small>{hint}</small>
+    </div>
   );
 }
 
@@ -783,6 +908,115 @@ function FactRow({ label, value }: { label: string; value: string }) {
     <div className="signal-fact-row">
       <dt>{label}</dt>
       <dd>{value}</dd>
+    </div>
+  );
+}
+
+function ActionPlanProgress({
+  actionPlan,
+  canExecutePlan,
+  latestExecution,
+}: {
+  actionPlan: SignalDetail["actionPlans"][number];
+  canExecutePlan: boolean;
+  latestExecution:
+    | SignalDetail["actionPlans"][number]["executions"][number]
+    | undefined;
+}) {
+  const steps = [
+    {
+      label: "Review",
+      detail: "Plan is prepared",
+      state: "complete" as LifecycleState,
+    },
+    {
+      label: "Approve",
+      detail: actionPlan.approval ? "Payload locked" : "Needs approval",
+      state: actionPlan.approval ? "complete" : "current" as LifecycleState,
+    },
+    {
+      label: "Execute",
+      detail: latestExecution
+        ? titleCase(latestExecution.status)
+        : canExecutePlan
+          ? "Ready after approval"
+          : "Not wired",
+      state: latestExecution
+        ? "complete"
+        : actionPlan.approval && canExecutePlan
+          ? "current"
+          : "waiting" as LifecycleState,
+    },
+  ];
+
+  return (
+    <div className="signal-plan-progress" aria-label="Action plan progress">
+      {steps.map((step) => (
+        <div
+          className={`signal-plan-progress-step signal-plan-progress-${step.state}`}
+          key={step.label}
+        >
+          <span>{step.label}</span>
+          <strong>{step.detail}</strong>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function ActionPlanPlainSummary({
+  actionPlan,
+}: {
+  actionPlan: SignalDetail["actionPlans"][number];
+}) {
+  const preview = asRecord(actionPlan.previewPayload);
+  const requiredReview = stringArray(preview?.requiredReview).slice(0, 3);
+  const operatorDecision = nullableString(preview?.operatorDecision);
+  const affectedCount = numberValue(preview?.affectedCount);
+  const isOraReview = actionPlan.provider === "ora";
+
+  return (
+    <div className="signal-plan-readable">
+      <div className="signal-plan-readable-main">
+        <p className="kicker">Plain meaning</p>
+        <h3>
+          {isOraReview
+            ? "Starts a focused operator review batch"
+            : "Runs one approved connector action"}
+        </h3>
+        <p>
+          {isOraReview
+            ? "This execution records the review batch in Ora. It does not change Shopify automatically."
+            : "Execution runs only after approval locks the exact payload."}
+        </p>
+      </div>
+      <div className="signal-plan-readable-facts">
+        <FactMini
+          label="Affected"
+          value={affectedCount == null ? "Unknown" : String(affectedCount)}
+        />
+        <FactMini
+          label="Run mode"
+          value={isOraReview ? "Ora review" : titleCase(actionPlan.provider)}
+        />
+      </div>
+      {operatorDecision || requiredReview.length ? (
+        <div className="signal-plan-checklist">
+          {operatorDecision ? (
+            <div>
+              <strong>Decision needed</strong>
+              <p>{operatorDecision}</p>
+            </div>
+          ) : null}
+          {requiredReview.length ? (
+            <ul>
+              {requiredReview.map((item) => (
+                <li key={item}>{item}</li>
+              ))}
+            </ul>
+          ) : null}
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -808,7 +1042,7 @@ function PathPanel({
       data-chat-object-type="signal_path_step"
       data-chat-prompt={`Explain this ${label} status: ${status}. ${body}`}
     >
-      <ChatOpenButton label={`Open ${label} status in chat`} />
+      <ChatOpenButton label={`Open ${label} status in chat`} hint={`${label} status`} />
       <div>
         <p className="kicker">{label}</p>
         <StatusBadge status={status} />
@@ -848,6 +1082,84 @@ function parseEvidenceExamples(value: unknown): EvidenceExample[] {
     .slice(0, 10);
 }
 
+function buildEvidenceFacts(evidenceItems: SignalEvidence[]) {
+  const facts = new Map<
+    string,
+    {
+      key: string;
+      title: string;
+      summary: string;
+      providers: string[];
+      observedAt: SignalEvidence["observedAt"];
+      count: number;
+    }
+  >();
+
+  for (const evidence of evidenceItems) {
+    const title = titleCase(evidence.evidenceType);
+    const summary = summarizeEvidenceDisplay(evidence.displayText);
+    const key = `${title}:${summary}`.toLowerCase();
+    const current = facts.get(key);
+
+    if (!current) {
+      facts.set(key, {
+        key,
+        title,
+        summary,
+        providers: [evidence.provider],
+        observedAt: evidence.observedAt,
+        count: 1,
+      });
+      continue;
+    }
+
+    current.count += 1;
+    if (!current.providers.includes(evidence.provider)) {
+      current.providers.push(evidence.provider);
+    }
+    if (new Date(evidence.observedAt) > new Date(current.observedAt)) {
+      current.observedAt = evidence.observedAt;
+    }
+  }
+
+  return [...facts.values()].sort((a, b) => b.count - a.count);
+}
+
+function summarizeEvidenceDisplay(value: string) {
+  const withoutExamples = value.split(/\bExamples:/i)[0]?.trim() ?? value;
+  const normalized = withoutExamples.replace(/\s+/g, " ").trim();
+  const withPeriod = /[.!?]$/.test(normalized) ? normalized : `${normalized}.`;
+
+  return withPeriod.length > 190
+    ? `${withPeriod.slice(0, 187).trim()}...`
+    : withPeriod;
+}
+
+function uniqueValues(values: string[]) {
+  return [...new Set(values.filter(Boolean))];
+}
+
+function getLatestEvidenceObservedAt(evidenceItems: SignalEvidence[]) {
+  return evidenceItems
+    .map((item) => item.observedAt)
+    .sort((a, b) => new Date(b).getTime() - new Date(a).getTime())[0];
+}
+
+function getTopEvidenceReason(examples: EvidenceExample[]) {
+  const counts = new Map<string, number>();
+
+  for (const example of examples) {
+    for (const reason of example.reasons) {
+      counts.set(reason, (counts.get(reason) ?? 0) + 1);
+    }
+  }
+
+  const [reason, count] = [...counts.entries()].sort((a, b) => b[1] - a[1])[0] ??
+    [];
+
+  return reason ? { reason, count } : null;
+}
+
 function affectedLabel(value: string) {
   if (value === "store") return "Store-level";
   if (value === "product") return "Products";
@@ -861,11 +1173,13 @@ function nextActionTitle(
   hasApproval: boolean,
   hasExecution: boolean,
   canExecutePlan: boolean,
+  canApprovePlan: boolean,
 ) {
   if (!hasActionPlan) return "Review evidence";
-  if (!hasApproval) return "Approve exact action";
+  if (!hasApproval && !canApprovePlan) return "Review prepared plan";
+  if (!hasApproval) return "Approve plan";
   if (!canExecutePlan) return "Ready for operator review";
-  if (!hasExecution) return "Execute approved action";
+  if (!hasExecution) return "Run approved plan";
   return "Track outcome";
 }
 
@@ -874,21 +1188,26 @@ function nextActionBody(
   hasApproval: boolean,
   hasExecution: boolean,
   canExecutePlan: boolean,
+  canApprovePlan: boolean,
 ) {
   if (!hasActionPlan) {
     return "This Signal does not have an executable plan yet, so the useful step is evidence review.";
   }
 
+  if (!hasApproval && !canApprovePlan) {
+    return "Ora prepared a review batch, but it still needs a final operator choice before approval.";
+  }
+
   if (!hasApproval) {
-    return "Approve only if the previewed payload is exactly the change you want Ora to make.";
+    return "Approve only after the plan matches the exact review or connector action you want.";
   }
 
   if (!canExecutePlan) {
-    return "Ora prepared the exact grouped action. Live execution for this provider still needs a dedicated executor.";
+    return "This plan is approved, but execution for this provider is not wired yet.";
   }
 
   if (!hasExecution) {
-    return "Ora will validate the approved payload hash before any Shopify mutation runs.";
+    return "Ora will validate the approved payload hash before running the plan.";
   }
 
   return "Watch whether the Signal improves, resolves, or needs a different action.";
@@ -937,10 +1256,45 @@ function isExecutableActionPlan(
 ) {
   const payload = asRecord(actionPlan?.executionPayload);
 
+  if (
+    actionPlan?.provider === "ora" &&
+    payload?.toolName === "ora_prepare_operator_review_batch"
+  ) {
+    return true;
+  }
+
   return (
     actionPlan?.provider === "shopify" &&
     payload?.toolName === "shopify_setProductReferenceMetafield"
   );
+}
+
+function isApprovableActionPlan(
+  actionPlan:
+    | { status: string; approval?: unknown | null }
+    | null
+    | undefined,
+) {
+  return (
+    !actionPlan?.approval &&
+    (actionPlan?.status === "draft" ||
+      actionPlan?.status === "approval_required")
+  );
+}
+
+function executionButtonLabel(
+  actionPlan: { provider: string; executionPayload: unknown },
+) {
+  const payload = asRecord(actionPlan.executionPayload);
+
+  if (
+    actionPlan.provider === "ora" &&
+    payload?.toolName === "ora_prepare_operator_review_batch"
+  ) {
+    return "Start review batch";
+  }
+
+  return "Execute approved action";
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -971,4 +1325,12 @@ function stringValue(value: unknown, fallback: string) {
 
 function nullableString(value: unknown) {
   return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function stringArray(value: unknown) {
+  return Array.isArray(value)
+    ? value
+        .map((item) => (typeof item === "string" ? item.trim() : ""))
+        .filter(Boolean)
+    : [];
 }

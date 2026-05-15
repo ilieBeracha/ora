@@ -2,7 +2,11 @@ import { describe, expect, it } from "vitest";
 
 import {
   buildInitialMessagesForTest,
+  extractUserAuthoredMessage,
+  hasLocalOraSignalRecord,
   parseConnectorAgentFinal,
+  shouldUseConnectorToolsForMessage,
+  wantsConnectedDataRead,
 } from "@/lib/chat/agent";
 
 describe("connector agent response parsing", () => {
@@ -65,5 +69,60 @@ describe("connector agent response parsing", () => {
       "קושלוייך - מרכך כביסה מפנק - רוח קיץ",
     );
     expect(messages.at(-1)?.content).toBe("give me more data on him");
+  });
+
+  it("separates the user request from appended Ora context", () => {
+    const message = [
+      "Explain this Signal in plain language.",
+      "",
+      "Current Ora context:",
+      "Local Ora Signal record.",
+      "Signal: Inventory risk",
+    ].join("\n");
+
+    expect(extractUserAuthoredMessage(message)).toBe(
+      "Explain this Signal in plain language.",
+    );
+    expect(hasLocalOraSignalRecord(message)).toBe(true);
+    expect(wantsConnectedDataRead(extractUserAuthoredMessage(message))).toBe(
+      false,
+    );
+  });
+
+  it("requires explicit connected-data intent before reading tools for Signal context", () => {
+    const signalContext = [
+      "",
+      "",
+      "Current Ora context:",
+      "Local Ora Signal record.",
+      "Signal: Inventory risk",
+    ].join("\n");
+
+    expect(wantsConnectedDataRead("Explain this Signal.")).toBe(false);
+    expect(shouldUseConnectorToolsForMessage(`Explain this.${signalContext}`))
+      .toBe(false);
+    expect(wantsConnectedDataRead("What is the next safe step?")).toBe(false);
+    expect(
+      shouldUseConnectorToolsForMessage(
+        `What is the next safe step?${signalContext}`,
+      ),
+    ).toBe(false);
+    expect(
+      wantsConnectedDataRead(
+        "Show the connected data behind 55 active products are unavailable.",
+      ),
+    ).toBe(true);
+    expect(
+      shouldUseConnectorToolsForMessage(
+        `Show the connected data behind this Signal.${signalContext}`,
+      ),
+    ).toBe(true);
+    expect(
+      wantsConnectedDataRead("Validate this Signal against Shopify inventory."),
+    ).toBe(true);
+  });
+
+  it("keeps general store chat on connector tools", () => {
+    expect(shouldUseConnectorToolsForMessage("Show top sellers.")).toBe(true);
   });
 });
