@@ -1,3 +1,5 @@
+import { ChatOpenButton } from "@/components/chat-open-button";
+
 export function PageHeader({
   eyebrow,
   title,
@@ -22,6 +24,7 @@ export function PageHeader({
         description ? `. ${description}` : ""
       }`}
     >
+      <ChatOpenButton label={`Ask about ${title}`} />
       <div className="page-marker">{marker ?? "Ora"}</div>
       <div className="layout-row">
         <div>

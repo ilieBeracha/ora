@@ -574,8 +574,7 @@ button {
     .signal-next-action,
     .signal-facts-panel,
     .signal-lifecycle-item,
-    .signal-path-panel,
-    .chat-widget
+    .signal-path-panel
   ) {
   position: relative;
 }
@@ -588,8 +587,7 @@ button {
     .signal-next-action,
     .signal-facts-panel,
     .signal-lifecycle-item,
-    .signal-path-panel,
-    .chat-widget
+    .signal-path-panel
   ):hover
   > .chat-open-button,
 :where(
@@ -599,8 +597,7 @@ button {
     .signal-next-action,
     .signal-facts-panel,
     .signal-lifecycle-item,
-    .signal-path-panel,
-    .chat-widget
+    .signal-path-panel
   ):focus-within
   > .chat-open-button {
   opacity: 1;
@@ -1134,11 +1131,6 @@ button {
   box-shadow: 0 10px 28px rgba(16, 20, 24, 0.04);
 }
 
-.chat-widget > .chat-open-button {
-  top: 8px;
-  right: 8px;
-}
-
 .chat-widget p {
   margin: 8px 0 0;
   color: var(--muted);
@@ -1149,7 +1141,7 @@ button {
 .chat-widget-title {
   border-bottom: 1px solid var(--line-soft);
   color: var(--muted);
-  padding: 10px 44px 10px 12px;
+  padding: 10px 12px;
   font-size: 12px;
   font-weight: 800;
 }
@@ -1238,7 +1230,7 @@ button {
 .chat-widget-scorecard-item {
   display: grid;
   gap: 8px;
-  padding: 14px 44px 14px 14px;
+  padding: 14px;
 }
 
 .chat-widget-kpi-label {
@@ -1303,7 +1295,7 @@ button {
 .chat-widget-bars {
   display: grid;
   gap: 12px;
-  padding: 44px 14px 14px;
+  padding: 14px;
 }
 
 .chat-widget-bar-row {
@@ -1365,7 +1357,7 @@ button {
 .chat-widget-product-body {
   display: grid;
   gap: 10px;
-  padding: 14px 44px 14px 14px;
+  padding: 14px;
 }
 
 .chat-widget-product-name {
@@ -1419,7 +1411,7 @@ button {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
   gap: 10px;
-  padding: 14px 44px 14px 14px;
+  padding: 14px;
 }
 
 .chat-widget-alert svg {

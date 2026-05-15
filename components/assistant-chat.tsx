@@ -22,6 +22,11 @@ import { usePathname } from "next/navigation";
 
 import { WidgetList } from "@/components/widgets/widget-renderer";
 import type { ChatWidget } from "@/lib/chat/widgets";
+import {
+  directIntroForContext,
+  suggestionsForContext,
+  type ChatSuggestion,
+} from "@/lib/chat/suggestions";
 
 type AssistantMessage = {
   id: string;
@@ -77,10 +82,7 @@ type ChatOpenContext = {
   objectId?: string;
 };
 
-type AssistantSuggestion = {
-  label: string;
-  prompt: string;
-};
+type AssistantSuggestion = ChatSuggestion;
 
 const chatSessionStorageKey = "ora-chat-session-id";
 const chatContextModeStorageKey = "ora-chat-context-mode";
@@ -983,55 +985,19 @@ function buildPageContext(pathname: string): ChatOpenContext {
 }
 
 function buildContextActions(context: ChatOpenContext): AssistantSuggestion[] {
-  const title = context.title ?? "this context";
-
-  return [
-    {
-      label: "Explain",
-      prompt:
-        context.defaultPrompt ??
-        `Summarize ${title} in operator terms. Do not talk about the UI.`,
-    },
-    {
-      label: "Next move",
-      prompt: `What should I review next for ${title}? Keep it focused and practical.`,
-    },
-    {
-      label: "Data",
-      prompt: `What connected data should I inspect to validate ${title}?`,
-    },
-  ];
+  return suggestionsForContext(context);
 }
 
 function buildDirectIntroMessage(context: ChatOpenContext): AssistantMessage {
-  const title = context.title ?? "this item";
-
   return {
     id: `direct-${crypto.randomUUID()}`,
     role: "assistant",
-    body: `Scoped to ${title}. Ask for the explanation, the evidence, or the next safe step.`,
+    body: directIntroForContext(context),
   };
 }
 
 function buildDirectSuggestions(context: ChatOpenContext): AssistantSuggestion[] {
-  const title = context.title ?? "this item";
-
-  return [
-    {
-      label: "Explain",
-      prompt:
-        context.defaultPrompt ??
-        `Explain ${title} in operator terms and keep it practical.`,
-    },
-    {
-      label: "Show data",
-      prompt: `Show the connected data behind ${title}. Keep only the facts needed to validate it.`,
-    },
-    {
-      label: "Next step",
-      prompt: `What is the next safe step for ${title}? Include approval or execution constraints if relevant.`,
-    },
-  ];
+  return suggestionsForContext(context);
 }
 
 function getChatContextTarget(target: EventTarget | null) {

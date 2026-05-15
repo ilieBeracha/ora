@@ -3,7 +3,6 @@ import { ExternalLink } from "lucide-react";
 
 import type { ChatWidget } from "@/lib/chat/widgets";
 
-import { ChatOpenButton } from "@/components/chat-open-button";
 import { formatWidgetValue } from "@/components/widgets/format";
 
 type ProductCardProps = Extract<ChatWidget, { type: "product_card" }>["props"];
@@ -20,15 +19,7 @@ export function ProductCardWidget({
   hint,
 }: ProductCardProps) {
   return (
-    <section
-      className="chat-widget chat-widget-product"
-      data-chat-explain="true"
-      data-chat-source="chat-widget"
-      data-chat-title={name}
-      data-chat-description={subtitle}
-      data-chat-prompt={`Explain this product widget for "${name}" and what I should look at next.`}
-    >
-      <ChatOpenButton label={`Open ${name} in chat`} />
+    <section className="chat-widget chat-widget-product">
       {imageUrl ? (
         <img className="chat-widget-product-image" src={imageUrl} alt="" />
       ) : null}

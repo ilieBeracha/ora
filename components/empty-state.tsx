@@ -18,9 +18,9 @@ export function EmptyState({
       data-chat-source="empty-state"
       data-chat-title={title}
       data-chat-description={body}
-      data-chat-prompt={`Explain this empty state: ${title}. ${body}`}
+      data-chat-prompt={`Nothing is here yet for "${title}". What should I connect or do first to fill this view? Context: ${body}`}
     >
-      <ChatOpenButton label={`Open ${title} in chat`} />
+      <ChatOpenButton label={`Ask how to fill ${title}`} />
       <div className="empty-index">{note}</div>
       <div>
         <h2 className="section-title">{title}</h2>

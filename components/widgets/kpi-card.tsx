@@ -1,6 +1,5 @@
 import type { ChatWidget } from "@/lib/chat/widgets";
 
-import { ChatOpenButton } from "@/components/chat-open-button";
 import { formatDelta, formatWidgetValue } from "@/components/widgets/format";
 
 type KpiCardProps = Extract<ChatWidget, { type: "kpi_card" }>["props"];
@@ -13,15 +12,7 @@ export function KpiCardWidget({
   hint,
 }: KpiCardProps) {
   return (
-    <section
-      className="chat-widget chat-widget-kpi"
-      data-chat-explain="true"
-      data-chat-source="chat-widget"
-      data-chat-title={label}
-      data-chat-description={hint}
-      data-chat-prompt={`Explain this KPI: ${label}.`}
-    >
-      <ChatOpenButton label={`Open ${label} KPI in chat`} />
+    <section className="chat-widget chat-widget-kpi">
       <div className="chat-widget-kpi-label">{label}</div>
       <div className="chat-widget-kpi-value">
         {formatWidgetValue(value, "number")}
