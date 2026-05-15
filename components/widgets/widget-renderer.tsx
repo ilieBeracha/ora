@@ -31,9 +31,11 @@ const WIDGET_REGISTRY = {
 };
 
 export function WidgetRenderer({
+  allowChatOpen = true,
   widget,
   onPrompt,
 }: {
+  allowChatOpen?: boolean;
   widget: ChatWidget;
   onPrompt?: (prompt: string) => void;
 }) {
@@ -42,15 +44,19 @@ export function WidgetRenderer({
   }
 
   const entry = WIDGET_REGISTRY[widget.type];
-  const Component = entry.component as ComponentType<typeof widget.props>;
+  const Component = entry.component as ComponentType<
+    typeof widget.props & { chatOpenEnabled?: boolean }
+  >;
 
-  return <Component {...widget.props} />;
+  return <Component {...widget.props} chatOpenEnabled={allowChatOpen} />;
 }
 
 export function WidgetList({
+  allowChatOpen = true,
   widgets,
   onPrompt,
 }: {
+  allowChatOpen?: boolean;
   widgets: ChatWidget[];
   onPrompt?: (prompt: string) => void;
 }) {
@@ -61,11 +67,15 @@ export function WidgetList({
   const footer = widgets.filter((widget) => widgetLayout(widget) === "footer");
 
   return (
-    <div className="chat-widget-list">
+    <div
+      className="chat-widget-list"
+      data-chat-widget-open={allowChatOpen ? "true" : "false"}
+    >
       {grid.length ? (
         <div className="chat-widget-grid">
           {grid.map((widget, index) => (
             <WidgetRenderer
+              allowChatOpen={allowChatOpen}
               key={`${widget.type}-${index}`}
               onPrompt={onPrompt}
               widget={widget}
@@ -76,6 +86,7 @@ export function WidgetList({
 
       {full.map((widget, index) => (
         <WidgetRenderer
+          allowChatOpen={allowChatOpen}
           key={`${widget.type}-${index}`}
           onPrompt={onPrompt}
           widget={widget}
@@ -84,6 +95,7 @@ export function WidgetList({
 
       {footer.map((widget, index) => (
         <WidgetRenderer
+          allowChatOpen={allowChatOpen}
           key={`${widget.type}-${index}`}
           onPrompt={onPrompt}
           widget={widget}

@@ -21,6 +21,14 @@ import {
 import { usePathname } from "next/navigation";
 
 import { WidgetList } from "@/components/widgets/widget-renderer";
+import {
+  buildChatContextSourceLabel,
+  buildDirectSuggestions,
+  buildFocusBriefContent,
+  describeDirectSuggestion,
+  type AssistantSuggestion,
+  type ChatOpenContext,
+} from "@/lib/chat/context";
 import type { ChatWidget } from "@/lib/chat/widgets";
 
 type AssistantMessage = {
@@ -64,31 +72,6 @@ type ChatHistoryTurn = {
 
 type ChatContextMode = "focused" | "clean" | "thread";
 type ChatViewMode = "direct" | "explore";
-
-type ChatOpenContext = {
-  source?: string;
-  title?: string;
-  description?: string;
-  defaultPrompt?: string;
-  href?: string;
-  signalId?: string;
-  actionPlanId?: string;
-  objectType?: string;
-  objectId?: string;
-};
-
-type AssistantSuggestion = {
-  label: string;
-  prompt: string;
-  detail?: string;
-};
-
-type AssistantFocusBriefContent = {
-  sourceLabel: string;
-  secondaryLabel: string | null;
-  actionTitle: string;
-  flow: [string, string, string];
-};
 
 type AssistantRailTarget = ChatOpenContext & {
   key: string;
@@ -459,6 +442,7 @@ export function AssistantChat() {
           message,
           history,
           sessionId: currentSessionId,
+          scope: runScope === "direct" ? "direct" : "general",
           contextMode: runScope === "direct" ? "clean" : contextMode,
           context,
         }),
@@ -965,6 +949,7 @@ export function AssistantChat() {
                           text={cleanChatDisplayCopy(message.body)}
                         />
                         <WidgetList
+                          allowChatOpen={false}
                           onPrompt={handleSuggestion}
                           widgets={message.widgets ?? []}
                         />
@@ -1290,7 +1275,7 @@ function readRailTargets(): AssistantRailTarget[] {
       label: title,
       detail,
       prompt,
-      sourceLabel: buildRailSourceLabel(element.dataset.chatSource),
+      sourceLabel: buildChatContextSourceLabel(element.dataset.chatSource),
       defaultPrompt: prompt,
     });
 
@@ -1334,22 +1319,6 @@ function truncateRailCopy(value: string) {
   return normalized.length > 74
     ? `${normalized.slice(0, 71).trim()}...`
     : normalized;
-}
-
-function buildRailSourceLabel(source: string | undefined) {
-  if (source === "today-trend-card") return "Trend";
-  if (source === "today-lead-insight") return "Main";
-  if (source === "today-memory-card") return "Signal";
-  if (source === "signal-card") return "Signal";
-  if (source === "action-card") return "Action";
-  if (source === "connection-card") return "Data";
-  if (source === "signal-section") return "Detail";
-  if (source === "signal-lifecycle") return "Step";
-  if (source === "signal-next-action") return "Next";
-  if (source === "signal-facts") return "Facts";
-  if (source === "signal-path-panel") return "Flow";
-
-  return "Ask";
 }
 
 function AssistantStoreBrief({
@@ -1399,10 +1368,99 @@ function AssistantStoreBrief({
 function buildStoreMountActions(context: ChatOpenContext) {
   const title = context.title ?? "this page";
 
+  if (title === "Actions" || context.href === "/actions") {
+    return [
+      {
+        label: "Needs approval",
+        detail: "Find plans waiting on an exact approval.",
+        prompt: "Which ActionPlans need approval, and what is blocking execution?",
+      },
+      {
+        label: "Ready to run",
+        detail: "Separate executable plans from blocked ones.",
+        prompt: "Which approved ActionPlans are ready to execute, and which are blocked?",
+      },
+      {
+        label: "Outcome follow-up",
+        detail: "Check executed plans that still need measurement.",
+        prompt: "Which executed ActionPlans still need outcome follow-up?",
+      },
+    ];
+  }
+
+  if (title === "Signal center" || context.href === "/signals") {
+    return [
+      {
+        label: "Priority Signal",
+        detail: "Choose the one Signal to open first.",
+        prompt:
+          context.defaultPrompt ??
+          "Summarize these Signals and point out the most important pattern.",
+      },
+      {
+        label: "Common evidence",
+        detail: "Find the repeated proof behind open Signals.",
+        prompt: "What evidence pattern appears across the open Signals?",
+      },
+      {
+        label: "Next review",
+        detail: "Name the safest review step.",
+        prompt: "Which Signal should I review next, and what exact evidence should I inspect first?",
+      },
+    ];
+  }
+
+  if (context.href?.startsWith("/signals/")) {
+    return [
+      {
+        label: "Explain Signal",
+        detail: "Meaning, evidence, and recommendation.",
+        prompt:
+          context.defaultPrompt ??
+          `Summarize this Signal, the evidence that matters, and the safest next step for ${title}.`,
+      },
+      {
+        label: "Action state",
+        detail: "Approval, execution, and outcome status.",
+        prompt: `What is the action-plan, approval, execution, and outcome status for ${title}?`,
+      },
+      {
+        label: "Validate data",
+        detail: "Connected facts to confirm before acting.",
+        prompt: `What connected data should I inspect to validate ${title}?`,
+      },
+    ];
+  }
+
+  if (title === "Connections" || context.href === "/connections") {
+    return [
+      {
+        label: "Data coverage",
+        detail: "What Ora can safely read now.",
+        prompt:
+          context.defaultPrompt ??
+          "Summarize connected systems and what data Ora can read from them.",
+      },
+      {
+        label: "Sync risk",
+        detail: "Which source might be stale or incomplete.",
+        prompt: "Which connected source has the biggest coverage or sync risk for Signal evidence?",
+      },
+      {
+        label: "Best read",
+        detail: "The next useful read-only question.",
+        prompt: "What is the best read-only question to ask from the connected systems right now?",
+      },
+    ];
+  }
+
   return [
     {
-      label: "Review Today",
-      detail: "Find the Signal that deserves attention first.",
+      label: title === "Today" ? "Top Signal" : "Explain page",
+      detail:
+        title === "Today"
+          ? "Find the Signal that deserves attention first."
+          : "Summarize where this page fits in the Signal flow.",
       prompt:
         context.defaultPrompt ??
         "Summarize the durable pattern in Today and the one Signal to review first.",
@@ -1481,209 +1539,6 @@ function AssistantFocusBrief({
   );
 }
 
-function buildFocusBriefContent(
-  context: ChatOpenContext,
-): AssistantFocusBriefContent {
-  const kind = getDirectContextKind(context);
-  const sourceLabel = buildRailSourceLabel(context.source);
-
-  if (kind === "action_plan") {
-    return {
-      sourceLabel: "Action",
-      secondaryLabel: "Plan",
-      actionTitle: "Move the plan forward",
-      flow: ["Review", "Approve", "Execute"],
-    };
-  }
-
-  if (kind === "evidence") {
-    return {
-      sourceLabel,
-      secondaryLabel: context.signalId ? "Signal" : null,
-      actionTitle: "Check the proof",
-      flow: ["Facts", "Examples", "Decision"],
-    };
-  }
-
-  if (kind === "recommendation") {
-    return {
-      sourceLabel,
-      secondaryLabel: context.signalId ? "Signal" : null,
-      actionTitle: "Turn advice into a plan",
-      flow: ["Why", "Risk", "Plan"],
-    };
-  }
-
-  if (kind === "lifecycle") {
-    return {
-      sourceLabel: "Step",
-      secondaryLabel: context.signalId ? "Signal" : null,
-      actionTitle: "Understand this step",
-      flow: ["State", "Blocker", "Move"],
-    };
-  }
-
-  return {
-    sourceLabel,
-    secondaryLabel: context.signalId ? "Signal" : null,
-    actionTitle: "Choose a focused question",
-    flow: ["Signal", "Evidence", "Action"],
-  };
-}
-
-function describeDirectSuggestion(label: string) {
-  if (label === "Explain") return "Plain-language meaning and why it matters.";
-  if (label === "Show data") return "Connected facts behind this selection.";
-  if (label === "Next step") return "Safest review, approval, or follow-up.";
-
-  return "Ask about this selection.";
-}
-
-function buildDirectSuggestions(context: ChatOpenContext): AssistantSuggestion[] {
-  const title = context.title ?? "this item";
-  const kind = getDirectContextKind(context);
-
-  if (kind === "action_plan") {
-    return [
-      {
-        label: "Review plan",
-        detail: "What the plan will do and what it will not do.",
-        prompt: `Review this ActionPlan for ${title}. Tell me what it does, what it will not change automatically, and what must happen before execution.`,
-      },
-      {
-        label: "Approval",
-        detail: "Whether the exact payload can be locked.",
-        prompt: `Can this ActionPlan for ${title} be approved now? Explain the exact approval condition and any blocker.`,
-      },
-      {
-        label: "Execution",
-        detail: "Where the run step is blocked or ready.",
-        prompt: `Can this ActionPlan for ${title} be executed now? If not, give the exact blocker and the next click.`,
-      },
-    ];
-  }
-
-  if (kind === "evidence") {
-    return [
-      {
-        label: "Key facts",
-        detail: "Summarize the proof without repeated text.",
-        prompt: `Summarize the key evidence for ${title}. Group repeated records and keep only the facts that prove or weaken the Signal.`,
-      },
-      {
-        label: "Examples",
-        detail: "Show concrete affected products or records.",
-        prompt: `Show the concrete examples behind ${title}. Keep the list short and explain why each example matters.`,
-      },
-      {
-        label: "Validate",
-        detail: "What connected data should confirm it.",
-        prompt: `What connected data should I check to validate the evidence for ${title}?`,
-      },
-    ];
-  }
-
-  if (kind === "recommendation") {
-    return [
-      {
-        label: "Why this",
-        detail: "Reasoning, risk, and expected impact.",
-        prompt: `Explain why this recommendation is the right move for ${title}. Include risk and confidence.`,
-      },
-      {
-        label: "Plan from it",
-        detail: "How it becomes one exact action.",
-        prompt: `How should this recommendation become an ActionPlan for ${title}? Keep it to one exact operator action.`,
-      },
-      {
-        label: "Risk check",
-        detail: "What could go wrong before approval.",
-        prompt: `What should I check before approving work based on this recommendation for ${title}?`,
-      },
-    ];
-  }
-
-  if (kind === "lifecycle") {
-    return [
-      {
-        label: "Current state",
-        detail: "What this workflow step means now.",
-        prompt: `Explain the current ${title} step in the Signal flow and what state it is in.`,
-      },
-      {
-        label: "Blocker",
-        detail: "The thing preventing the next step.",
-        prompt: `What blocks the ${title} step from moving forward? Be specific.`,
-      },
-      {
-        label: "Move forward",
-        detail: "The next concrete operator action.",
-        prompt: `What is the next concrete move for the ${title} step? Include approval or execution constraints if relevant.`,
-      },
-    ];
-  }
-
-  return [
-    {
-      label: "Explain",
-      detail: "Plain-language meaning and why it matters.",
-      prompt:
-        context.defaultPrompt ??
-        `Explain ${title} in operator terms and keep it practical.`,
-    },
-    {
-      label: "Evidence",
-      detail: "Facts that prove or weaken this.",
-      prompt: `Show the connected data behind ${title}. Keep only the facts needed to validate it.`,
-    },
-    {
-      label: "Next action",
-      detail: "The safest review, approval, or run step.",
-      prompt: `What is the next safe step for ${title}? Include approval or execution constraints if relevant.`,
-    },
-  ];
-}
-
-function getDirectContextKind(context: ChatOpenContext) {
-  const source = context.source ?? "";
-  const objectType = context.objectType ?? "";
-  const title = (context.title ?? "").toLowerCase();
-
-  if (
-    objectType === "action_plan" ||
-    source === "action-card" ||
-    title.includes("action plan")
-  ) {
-    return "action_plan";
-  }
-
-  if (
-    source === "signal-facts" ||
-    (source === "signal-section" && title.includes("evidence")) ||
-    (source === "signal-section" && title.includes("what happened"))
-  ) {
-    return "evidence";
-  }
-
-  if (objectType === "recommendation" || title.includes("recommended")) {
-    return "recommendation";
-  }
-
-  if (
-    objectType === "signal_lifecycle_step" ||
-    objectType === "signal_path_step" ||
-    objectType === "signal_mutation_path" ||
-    objectType === "next_action" ||
-    source === "signal-lifecycle" ||
-    source === "signal-path-panel" ||
-    source === "signal-next-action"
-  ) {
-    return "lifecycle";
-  }
-
-  return "signal";
-}
-
 function getChatContextTarget(target: EventTarget | null) {
   const element =
     target instanceof Element
@@ -1693,6 +1548,7 @@ function getChatContextTarget(target: EventTarget | null) {
       : null;
 
   if (!element) return null;
+  if (element.closest(".assistant-panel")) return null;
 
   const trigger = element.closest<HTMLElement>("[data-chat-open]");
 
@@ -1735,7 +1591,25 @@ function readChatContext(element: HTMLElement): ChatOpenContext {
     actionPlanId: element.dataset.chatActionPlanId,
     objectType: element.dataset.chatObjectType,
     objectId: element.dataset.chatObjectId,
+    widgetType: readChatWidgetType(element.dataset.chatWidgetType),
+    dataSummary: element.dataset.chatDataSummary,
   };
+}
+
+function readChatWidgetType(value: string | undefined) {
+  if (
+    value === "kpi_card" ||
+    value === "scorecard_grid" ||
+    value === "stat_list" ||
+    value === "data_table" ||
+    value === "bar_chart" ||
+    value === "product_card" ||
+    value === "alert_card"
+  ) {
+    return value;
+  }
+
+  return undefined;
 }
 
 function getSignalIdFromPathname(pathname: string) {

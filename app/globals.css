@@ -1668,6 +1668,24 @@ button {
   right: 8px;
 }
 
+.chat-widget-static {
+  cursor: default;
+}
+
+.chat-widget-list[data-chat-widget-open="false"] .chat-widget-title {
+  padding-right: 12px;
+}
+
+.chat-widget-list[data-chat-widget-open="false"] .chat-widget-kpi,
+.chat-widget-list[data-chat-widget-open="false"] .chat-widget-alert,
+.chat-widget-list[data-chat-widget-open="false"] .chat-widget-product-body {
+  padding-right: 14px;
+}
+
+.chat-widget-list[data-chat-widget-open="false"] .chat-widget-bars {
+  padding-top: 14px;
+}
+
 .chat-widget p {
   margin: 8px 0 0;
   color: var(--muted);
@@ -2268,6 +2286,351 @@ button {
 .signal-detail-view {
   display: grid;
   gap: 16px;
+}
+
+.signal-detail-readable {
+  gap: 14px;
+}
+
+.signal-command-panel {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(340px, 0.48fr);
+  gap: 16px;
+  border: 1px solid var(--line);
+  border-left: 4px solid var(--accent);
+  border-radius: 18px;
+  background: #ffffff;
+  padding: 20px 52px 20px 20px;
+  box-shadow: var(--shadow-card);
+}
+
+.signal-command-blocked {
+  border-left-color: var(--danger);
+}
+
+.signal-command-done,
+.signal-command-ready {
+  border-left-color: var(--success);
+}
+
+.signal-command-main {
+  display: grid;
+  align-content: start;
+  gap: 10px;
+  min-width: 0;
+}
+
+.signal-command-main h2 {
+  margin: 0;
+  color: var(--foreground);
+  font-size: 34px;
+  font-weight: 850;
+  letter-spacing: 0;
+  line-height: 1.05;
+}
+
+.signal-command-main p {
+  max-width: 760px;
+  margin: 0;
+  color: var(--muted);
+  font-size: 15px;
+  line-height: 1.55;
+}
+
+.signal-command-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  margin-top: 4px;
+}
+
+.signal-command-actions form,
+.signal-command-actions p {
+  margin: 0;
+}
+
+.signal-visible-flow {
+  display: grid;
+  gap: 8px;
+}
+
+.signal-visible-flow-step {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 10px;
+  align-items: center;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--surface-inset);
+  padding: 12px;
+}
+
+.signal-visible-flow-icon {
+  display: grid;
+  width: 34px;
+  height: 34px;
+  place-items: center;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #ffffff;
+  color: var(--muted);
+}
+
+.signal-visible-flow-step strong,
+.signal-visible-flow-step small {
+  display: block;
+  min-width: 0;
+}
+
+.signal-visible-flow-step strong {
+  color: var(--foreground);
+  font-size: 14px;
+  font-weight: 850;
+  line-height: 1.15;
+}
+
+.signal-visible-flow-step small {
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 750;
+  line-height: 1.25;
+}
+
+.signal-visible-flow-complete .signal-visible-flow-icon {
+  border-color: color-mix(in srgb, var(--success) 28%, #ffffff);
+  background: color-mix(in srgb, var(--success) 8%, #ffffff);
+  color: var(--success);
+}
+
+.signal-visible-flow-current {
+  border-color: color-mix(in srgb, var(--accent) 26%, #ffffff);
+  background: color-mix(in srgb, var(--accent) 6%, #ffffff);
+}
+
+.signal-visible-flow-current .signal-visible-flow-icon {
+  border-color: color-mix(in srgb, var(--accent) 28%, #ffffff);
+  background: color-mix(in srgb, var(--accent) 8%, #ffffff);
+  color: var(--accent);
+}
+
+.signal-visible-flow-blocked .signal-visible-flow-icon {
+  border-color: color-mix(in srgb, var(--danger) 24%, #ffffff);
+  background: color-mix(in srgb, var(--danger) 8%, #ffffff);
+  color: var(--danger);
+}
+
+.signal-truth-grid {
+  display: grid;
+  grid-column: 1 / -1;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--surface-inset);
+}
+
+.signal-truth-cell {
+  display: grid;
+  gap: 6px;
+  border-right: 1px solid var(--line-soft);
+  padding: 14px;
+}
+
+.signal-truth-cell:last-child {
+  border-right: 0;
+}
+
+.signal-truth-cell span,
+.signal-readable-head .kicker,
+.signal-one-example span,
+.signal-ledger-entry span {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 850;
+  line-height: 1.15;
+}
+
+.signal-truth-cell strong,
+.signal-one-example strong {
+  color: var(--foreground);
+  font-size: 14px;
+  font-weight: 850;
+  line-height: 1.2;
+}
+
+.signal-truth-cell p,
+.signal-one-example p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.45;
+}
+
+.signal-readable-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.signal-readable-card,
+.signal-supporting-details {
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: #ffffff;
+  padding: 18px;
+  box-shadow: var(--shadow-card);
+}
+
+.signal-readable-card {
+  display: grid;
+  align-content: start;
+  gap: 14px;
+}
+
+.signal-readable-head {
+  display: grid;
+  gap: 7px;
+}
+
+.signal-readable-head h2 {
+  margin: 0;
+  color: var(--foreground);
+  font-size: 21px;
+  font-weight: 850;
+  line-height: 1.12;
+}
+
+.signal-readable-head p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1.55;
+}
+
+.signal-brief-metrics {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--surface-inset);
+}
+
+.signal-brief-metrics .signal-mini-fact {
+  min-height: 72px;
+}
+
+.signal-one-example {
+  display: grid;
+  gap: 5px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--surface-inset);
+  padding: 13px;
+}
+
+.signal-action-ledger {
+  display: grid;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--surface-inset);
+}
+
+.signal-ledger-entry {
+  display: grid;
+  grid-template-columns: 104px 108px minmax(0, 1fr);
+  gap: 5px;
+  border-left: 3px solid var(--line-strong);
+  border-bottom: 1px solid var(--line-soft);
+  padding: 12px;
+}
+
+.signal-ledger-entry:last-child {
+  border-bottom: 0;
+}
+
+.signal-ledger-done {
+  border-left-color: var(--success);
+}
+
+.signal-ledger-attention,
+.signal-ledger-ready {
+  border-left-color: var(--accent);
+}
+
+.signal-ledger-blocked {
+  border-left-color: var(--danger);
+}
+
+.signal-ledger-entry strong {
+  color: var(--foreground);
+  font-size: 13px;
+  font-weight: 850;
+  line-height: 1.2;
+}
+
+.signal-ledger-entry p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.4;
+}
+
+.signal-supporting-details {
+  padding: 0;
+}
+
+.signal-supporting-details > summary {
+  cursor: pointer;
+  color: var(--foreground);
+  font-size: 14px;
+  font-weight: 850;
+  list-style-position: inside;
+  padding: 16px 18px;
+}
+
+.signal-supporting-details[open] > summary {
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.signal-supporting-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+  padding: 18px;
+}
+
+.signal-supporting-card {
+  display: grid;
+  align-content: start;
+  gap: 10px;
+  min-width: 0;
+}
+
+.signal-supporting-card h3 {
+  margin: 0;
+  color: var(--foreground);
+  font-size: 16px;
+  font-weight: 850;
+  line-height: 1.2;
+}
+
+.signal-supporting-card p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.signal-supporting-card .signal-mini-fact {
+  border: 1px solid var(--line-soft);
+  border-radius: 12px;
 }
 
 .lifecycle-scan-panel {
@@ -3297,8 +3660,279 @@ button {
   justify-items: end;
 }
 
+.signal-task-primary {
+  align-items: start;
+}
+
 .task-copy {
   max-width: 760px;
+}
+
+.flow-badge {
+  display: inline-flex;
+  min-height: 24px;
+  align-items: center;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-inset);
+  color: var(--foreground);
+  padding: 3px 8px;
+  font-size: 11px;
+  font-weight: 850;
+  line-height: 1.2;
+}
+
+.flow-badge-complete {
+  border-color: color-mix(in srgb, var(--success) 26%, #ffffff);
+  background: color-mix(in srgb, var(--success) 8%, #ffffff);
+  color: var(--success);
+}
+
+.flow-badge-current {
+  border-color: color-mix(in srgb, var(--accent) 26%, #ffffff);
+  background: color-mix(in srgb, var(--accent) 8%, #ffffff);
+  color: var(--accent);
+}
+
+.flow-badge-blocked {
+  border-color: color-mix(in srgb, var(--danger) 24%, #ffffff);
+  background: color-mix(in srgb, var(--danger) 8%, #ffffff);
+  color: var(--danger);
+}
+
+.flow-badge-attention {
+  border-color: color-mix(in srgb, var(--accent) 26%, #ffffff);
+  background: color-mix(in srgb, var(--accent) 8%, #ffffff);
+  color: var(--accent);
+}
+
+.flow-badge-ready {
+  border-color: color-mix(in srgb, var(--success) 28%, #ffffff);
+  background: color-mix(in srgb, var(--success) 8%, #ffffff);
+  color: var(--success);
+}
+
+.flow-badge-watching,
+.flow-badge-research {
+  border-color: color-mix(in srgb, var(--muted) 26%, #ffffff);
+  background: var(--surface-inset);
+  color: var(--muted);
+}
+
+.flow-badge-done {
+  border-color: color-mix(in srgb, var(--success) 26%, #ffffff);
+  background: color-mix(in srgb, var(--success) 8%, #ffffff);
+  color: var(--success);
+}
+
+.signal-owner-board {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 0.7fr) minmax(440px, 1fr);
+  gap: 16px;
+  margin-bottom: 16px;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: #ffffff;
+  padding: 18px 52px 18px 18px;
+  box-shadow: var(--shadow-card);
+}
+
+.signal-owner-board-copy {
+  display: grid;
+  align-content: start;
+  gap: 8px;
+}
+
+.signal-owner-board-copy h2 {
+  margin: 0;
+  color: var(--foreground);
+  font-size: 24px;
+  font-weight: 850;
+  letter-spacing: 0;
+  line-height: 1.1;
+}
+
+.signal-owner-board-copy p:last-child {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.signal-owner-lanes {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--surface-inset);
+}
+
+.signal-owner-lane {
+  display: grid;
+  min-height: 82px;
+  align-content: center;
+  gap: 7px;
+  border-right: 1px solid var(--line-soft);
+  padding: 12px;
+}
+
+.signal-owner-lane:last-child {
+  border-right: 0;
+}
+
+.signal-owner-lane span {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 850;
+  line-height: 1.15;
+}
+
+.signal-owner-lane strong {
+  color: var(--foreground);
+  font-size: 26px;
+  font-weight: 850;
+  line-height: 1;
+}
+
+.signal-owner-list {
+  margin-top: 0;
+}
+
+.signal-owner-card {
+  border-left: 4px solid transparent;
+}
+
+.signal-owner-card-attention,
+.signal-owner-card-ready {
+  border-left-color: var(--accent);
+}
+
+.signal-owner-card-blocked {
+  border-left-color: var(--danger);
+}
+
+.signal-owner-card-done {
+  border-left-color: var(--success);
+}
+
+.signal-owner-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--surface-inset);
+}
+
+.signal-work-cell {
+  display: grid;
+  gap: 6px;
+  border-right: 1px solid var(--line-soft);
+  padding: 13px;
+}
+
+.signal-work-cell:last-child {
+  border-right: 0;
+}
+
+.signal-work-cell span,
+.action-effect-cell span,
+.action-log-entry span {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 850;
+  line-height: 1.15;
+}
+
+.signal-work-cell strong,
+.action-effect-cell strong {
+  color: var(--foreground);
+  font-size: 14px;
+  font-weight: 850;
+  line-height: 1.2;
+}
+
+.signal-work-cell p,
+.action-effect-cell p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.45;
+}
+
+.signal-row-insight {
+  display: grid;
+  gap: 4px;
+  margin-top: 12px;
+  border-left: 3px solid var(--accent);
+  padding-left: 10px;
+}
+
+.signal-row-insight strong {
+  color: var(--foreground);
+  font-size: 13px;
+  font-weight: 850;
+  line-height: 1.2;
+}
+
+.signal-row-insight span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 750;
+  line-height: 1.35;
+}
+
+.signal-flow-strip {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--surface-inset);
+}
+
+.signal-flow-step {
+  display: grid;
+  gap: 5px;
+  border-right: 1px solid var(--line-soft);
+  padding: 11px 12px;
+}
+
+.signal-flow-step:last-child {
+  border-right: 0;
+}
+
+.signal-flow-step span {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 850;
+  line-height: 1;
+}
+
+.signal-flow-step strong {
+  color: var(--foreground);
+  font-size: 12px;
+  font-weight: 850;
+  line-height: 1.2;
+}
+
+.signal-flow-step-complete {
+  background: #ffffff;
+}
+
+.signal-flow-step-current {
+  background: color-mix(in srgb, var(--accent) 7%, #ffffff);
+}
+
+.signal-flow-step-blocked {
+  background: color-mix(in srgb, var(--danger) 7%, #ffffff);
+}
+
+.signal-flow-step-blocked strong {
+  color: var(--danger);
 }
 
 .action-card-next {
@@ -3325,7 +3959,7 @@ button {
 
 .action-plan-flow {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   overflow: hidden;
   border: 1px solid var(--line);
   border-radius: 14px;
@@ -3364,6 +3998,178 @@ button {
 
 .action-plan-step-current {
   background: color-mix(in srgb, var(--accent) 7%, #ffffff);
+}
+
+.action-command-center {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 0.74fr) minmax(420px, 1fr);
+  gap: 16px;
+  margin-bottom: 16px;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: #ffffff;
+  padding: 18px 52px 18px 18px;
+  box-shadow: var(--shadow-card);
+}
+
+.action-command-copy {
+  display: grid;
+  align-content: start;
+  gap: 8px;
+}
+
+.action-command-copy h2 {
+  margin: 0;
+  color: var(--foreground);
+  font-size: 24px;
+  font-weight: 850;
+  letter-spacing: 0;
+  line-height: 1.1;
+}
+
+.action-command-copy p:last-child {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.action-lane-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--surface-inset);
+}
+
+.action-lane {
+  display: grid;
+  min-height: 96px;
+  align-content: center;
+  gap: 6px;
+  border-right: 1px solid var(--line-soft);
+  padding: 13px;
+}
+
+.action-lane:last-child {
+  border-right: 0;
+}
+
+.action-lane span,
+.action-lane small {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 1.25;
+}
+
+.action-lane strong {
+  color: var(--foreground);
+  font-size: 28px;
+  font-weight: 850;
+  line-height: 1;
+}
+
+.action-lane-attention strong,
+.action-lane-ready strong,
+.action-lane-watching strong {
+  color: var(--accent);
+}
+
+.action-lane-blocked strong {
+  color: var(--danger);
+}
+
+.action-queue-list {
+  margin-top: 0;
+}
+
+.action-row-blocked .action-card-next {
+  border-left-color: var(--danger);
+}
+
+.action-effect-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--surface-inset);
+}
+
+.action-effect-cell {
+  display: grid;
+  gap: 6px;
+  border-right: 1px solid var(--line-soft);
+  padding: 13px;
+}
+
+.action-effect-cell:last-child {
+  border-right: 0;
+}
+
+.action-log-list {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: #ffffff;
+}
+
+.action-log-entry {
+  display: grid;
+  min-height: 108px;
+  align-content: start;
+  gap: 8px;
+  border-right: 1px solid var(--line-soft);
+  border-top: 3px solid var(--line-strong);
+  padding: 12px;
+}
+
+.action-log-entry:last-child {
+  border-right: 0;
+}
+
+.action-log-entry-ready,
+.action-log-entry-attention {
+  border-top-color: var(--accent);
+}
+
+.action-log-entry-blocked {
+  border-top-color: var(--danger);
+}
+
+.action-log-entry-done {
+  border-top-color: var(--success);
+}
+
+.action-log-entry div {
+  display: grid;
+  gap: 4px;
+}
+
+.action-log-entry strong {
+  color: var(--foreground);
+  font-size: 13px;
+  font-weight: 850;
+  line-height: 1.2;
+}
+
+.action-log-entry p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.4;
+}
+
+.action-log-entry small {
+  color: var(--muted-2);
+  font-size: 11px;
+  font-weight: 800;
 }
 
 .task-details {
@@ -3874,7 +4680,18 @@ button {
     padding: 18px;
   }
 
+  .signal-command-main h2 {
+    font-size: 28px;
+  }
+
   .two-col,
+  .signal-command-panel,
+  .signal-visible-flow,
+  .signal-truth-grid,
+  .signal-readable-grid,
+  .signal-brief-metrics,
+  .signal-action-ledger,
+  .signal-supporting-grid,
   .signal-hero-panel,
   .signal-detail-grid,
   .signal-work-grid,
@@ -3890,6 +4707,14 @@ button {
   .today-trend-grid,
   .today-memory-grid,
   .today-lane-list,
+  .signal-owner-board,
+  .signal-owner-lanes,
+  .signal-owner-grid,
+  .signal-flow-strip,
+  .action-command-center,
+  .action-lane-grid,
+  .action-effect-grid,
+  .action-log-list,
   .assistant-store-brief,
   .assistant-store-brief-actions,
   .assistant-focus-brief,
@@ -3914,21 +4739,41 @@ button {
   }
 
   .signal-lifecycle-item,
+  .signal-truth-cell,
+  .signal-mini-fact,
+  .signal-ledger-entry,
   .lifecycle-metric,
   .signal-score-card,
-  .signal-mini-fact,
   .signal-plan-progress-step,
+  .signal-flow-step,
+  .signal-owner-lane,
+  .signal-work-cell,
+  .action-lane,
+  .action-effect-cell,
+  .action-log-entry,
   .evidence-metric,
   .today-lane {
     border-right: 0;
     border-bottom: 1px solid var(--line-soft);
   }
 
+  .signal-ledger-entry {
+    grid-template-columns: 1fr;
+  }
+
   .signal-lifecycle-item:last-child,
+  .signal-truth-cell:last-child,
+  .signal-mini-fact:last-child,
+  .signal-ledger-entry:last-child,
   .lifecycle-metric:nth-last-child(-n + 2),
   .signal-score-card:last-child,
-  .signal-mini-fact:last-child,
   .signal-plan-progress-step:last-child,
+  .signal-flow-step:last-child,
+  .signal-owner-lane:last-child,
+  .signal-work-cell:last-child,
+  .action-lane:last-child,
+  .action-effect-cell:last-child,
+  .action-log-entry:last-child,
   .evidence-metric:last-child,
   .today-lane:last-child {
     border-bottom: 0;

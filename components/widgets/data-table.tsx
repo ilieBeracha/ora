@@ -1,6 +1,12 @@
 import type { ChatWidget } from "@/lib/chat/widgets";
 
 import { ChatOpenButton } from "@/components/chat-open-button";
+import {
+  chatTriggerAttributes,
+  chatWidgetClassName,
+  summarizeDataTable,
+  type WidgetChatTriggerProps,
+} from "@/components/widgets/chat-trigger";
 import { formatWidgetValue } from "@/components/widgets/format";
 
 type DataTableProps = Extract<ChatWidget, { type: "data_table" }>["props"];
@@ -11,19 +17,30 @@ export function DataTableWidget({
   columns,
   rows,
   currency,
-}: DataTableProps) {
+  chatOpenEnabled = true,
+}: DataTableProps & WidgetChatTriggerProps) {
+  const chatTitle = title ?? "Data table";
+
   return (
     <section
-      className="chat-widget chat-widget-data-table"
-      data-chat-explain="true"
-      data-chat-source="chat-widget"
-      data-chat-title={title ?? "Data table"}
-      data-chat-description={`${rows.length} rows and ${columns.length} columns shown in this chat widget.`}
-      data-chat-prompt={`Explain this data table${
-        title ? `: ${title}` : ""
-      } and call out the most important rows.`}
+      className={chatWidgetClassName(
+        "chat-widget chat-widget-data-table",
+        chatOpenEnabled,
+      )}
+      {...chatTriggerAttributes({
+        enabled: chatOpenEnabled,
+        title: chatTitle,
+        description: `${rows.length} rows and ${columns.length} columns shown in this table.`,
+        prompt: `Explain this data table${
+          title ? `: ${title}` : ""
+        }. Use the selected rows and call out the most important records.`,
+        widgetType: "data_table",
+        dataSummary: summarizeDataTable({ title, columns, rows, currency }),
+      })}
     >
-      <ChatOpenButton label={`Open ${title ?? "data table"} in chat`} />
+      {chatOpenEnabled ? (
+        <ChatOpenButton label={`Open ${title ?? "data table"} in chat`} />
+      ) : null}
       {title ? <div className="chat-widget-title">{title}</div> : null}
       <div className="chat-widget-table-scroll">
         <table>

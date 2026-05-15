@@ -3,6 +3,15 @@ import { z } from "zod";
 
 import { requireCurrentUser } from "@/lib/auth/session";
 import { ConnectorAgentCancelledError, isConnectorAgentCancelledError } from "@/lib/chat/agent";
+import {
+  buildDirectSuggestions,
+  resolveChatContextKind,
+} from "@/lib/chat/context";
+import {
+  getPersistedHistoryLimit,
+  resolveChatTurnHistory,
+  type ChatRequestScope,
+} from "@/lib/chat/history-policy";
 import { answerConnectorChat } from "@/lib/chat/responder";
 import {
   getLatestChatSnapshot,
@@ -36,17 +45,31 @@ const chatContextSchema = z.object({
   source: z.string().max(80).optional(),
   title: z.string().max(200).optional(),
   description: z.string().max(1000).optional(),
+  defaultPrompt: z.string().max(1000).optional(),
   href: z.string().max(300).optional(),
   signalId: z.string().max(80).optional(),
   actionPlanId: z.string().max(80).optional(),
   objectType: z.string().max(80).optional(),
   objectId: z.string().max(160).optional(),
+  widgetType: z
+    .enum([
+      "kpi_card",
+      "scorecard_grid",
+      "stat_list",
+      "data_table",
+      "bar_chart",
+      "product_card",
+      "alert_card",
+    ])
+    .optional(),
+  dataSummary: z.string().max(2600).optional(),
 });
 
 const chatRequestSchema = z.object({
   message: z.string().min(1).max(1000),
   sessionId: z.string().uuid().nullable().optional(),
   history: z.array(chatHistoryTurnSchema).max(10).default([]),
+  scope: z.enum(["general", "direct"]).default("general"),
   contextMode: z.enum(["focused", "clean", "thread"]).default("focused"),
   context: chatContextSchema.nullable().optional(),
 });
@@ -180,16 +203,19 @@ async function runChatTurn(
   );
   options.emit?.("session", { sessionId: session.id });
 
-  const historyLimit = getHistoryLimit(parsed.contextMode);
-  const persistedHistory = await getConversationHistory(session.id, {
-    limit: historyLimit,
+  const historyLimit = getPersistedHistoryLimit(parsed.contextMode);
+  const persistedHistory =
+    parsed.scope === "general"
+      ? await getConversationHistory(session.id, {
+          limit: historyLimit,
+        })
+      : [];
+  const history = resolveChatTurnHistory({
+    scope: parsed.scope,
+    contextMode: parsed.contextMode,
+    persistedHistory,
+    clientHistory: parsed.history,
   });
-  const history =
-    historyLimit === 0
-      ? []
-      : persistedHistory.length > 0
-        ? persistedHistory
-        : parsed.history;
   const signalContext = await getSignalChatRecord(
     user.companyId,
     parsed.context,
@@ -230,6 +256,7 @@ async function runChatTurn(
       response.reply,
       signalContext,
       parsed.message,
+      parsed.scope,
     ),
   };
 
@@ -319,12 +346,6 @@ function wantsStream(request: Request) {
   );
 }
 
-function getHistoryLimit(mode: ChatRequest["contextMode"]) {
-  if (mode === "clean") return 0;
-  if (mode === "thread") return 12;
-  return 4;
-}
-
 function addUiContextToMessage(
   message: string,
   context: ChatRequest["context"],
@@ -332,15 +353,20 @@ function addUiContextToMessage(
 ) {
   if (!context && !signalContext) return message;
 
+  const contextKind = context ? resolveChatContextKind(context) : null;
   const details = [
+    contextKind ? `Focus intent: ${contextKind}` : "",
     context?.source ? `Source: ${context.source}` : "",
     context?.title ? `Title: ${context.title}` : "",
     context?.description ? `Description: ${context.description}` : "",
+    context?.defaultPrompt ? `Default question: ${context.defaultPrompt}` : "",
     context?.href ? `Path: ${context.href}` : "",
     context?.signalId ? `Signal ID: ${context.signalId}` : "",
     context?.actionPlanId ? `ActionPlan ID: ${context.actionPlanId}` : "",
     context?.objectType ? `Object type: ${context.objectType}` : "",
     context?.objectId ? `Object ID: ${context.objectId}` : "",
+    context?.widgetType ? `Widget type: ${context.widgetType}` : "",
+    context?.dataSummary ? `Selected data summary: ${context.dataSummary}` : "",
   ].filter(Boolean);
   const signalDetails = signalContext
     ? `\n\n${buildSignalContextBlock(signalContext)}`
@@ -350,7 +376,7 @@ function addUiContextToMessage(
 
   return `${message}\n\nCurrent Ora context:\n${details.join(
     "\n",
-  )}${signalDetails}\n\nUse this context silently to understand the current page, object, or Signal. Do not mention clicks, UI context, or that the user selected something. For questions about status, approval, execution, or outcome of this Signal, answer from the local Ora Signal record first. Chat remains read-only.`;
+  )}${signalDetails}\n\nUse this context silently to understand the current page, object, widget, or Signal. If a selected data summary is present, treat it as the starting fact set for the focused question. Do not mention clicks, UI context, or that the user selected something. Tailor follow-up suggestions to this specific context, not to generic store chat. For questions about status, approval, execution, or outcome of this Signal, answer from the local Ora Signal record first. Chat remains read-only.`;
 }
 
 function ensureContextAnswerWidgets(
@@ -359,31 +385,69 @@ function ensureContextAnswerWidgets(
   reply: string,
   signalContext?: SignalChatRecord | null,
   userMessage = "",
+  scope: ChatRequestScope = "general",
 ) {
   if (!context) return widgets;
+  let nextWidgets = widgets;
+
   if (shouldShowSignalStatusWidget(signalContext, userMessage, widgets)) {
-    return [...buildSignalStatusWidgets(signalContext), ...widgets].slice(0, 5);
+    nextWidgets = [...buildSignalStatusWidgets(signalContext), ...nextWidgets];
+  } else if (!nextWidgets.some((widget) => widget.type !== "followup_chips")) {
+    nextWidgets = [
+      ...(signalContext
+        ? buildSignalStatusWidgets(signalContext)
+        : [
+            ChatWidgetSchema.parse({
+              type: "alert_card",
+              props: {
+                tone: "info",
+                title: context.title
+                  ? `${context.title} takeaway`
+                  : "Current context",
+                body: summarizeReply(reply),
+              },
+            }),
+          ]),
+      ...nextWidgets,
+    ];
   }
 
-  if (widgets.some((widget) => widget.type !== "followup_chips")) return widgets;
+  if (scope === "direct") {
+    return ensureDirectFollowupWidget(nextWidgets, context);
+  }
+
+  return nextWidgets.slice(0, 5);
+}
+
+function ensureDirectFollowupWidget(
+  widgets: ChatWidget[],
+  context: NonNullable<ChatRequest["context"]>,
+) {
+  if (widgets.some((widget) => widget.type === "followup_chips")) {
+    return widgets.slice(0, 5);
+  }
+
+  const prompts = buildDirectSuggestions(context)
+    .slice(0, 2)
+    .map((suggestion) => ({
+      label: suggestion.label,
+      prompt: suggestion.prompt,
+    }));
+
+  if (prompts.length < 2) return widgets.slice(0, 5);
+
+  const followups = ChatWidgetSchema.parse({
+    type: "followup_chips",
+    props: {
+      title: "Suggested next reads",
+      prompts,
+    },
+  });
 
   return [
-    ...(signalContext
-      ? buildSignalStatusWidgets(signalContext)
-      : [
-          ChatWidgetSchema.parse({
-            type: "alert_card",
-            props: {
-              tone: "info",
-              title: context.title
-                ? `${context.title} takeaway`
-                : "Current context",
-              body: summarizeReply(reply),
-            },
-          }),
-        ]),
-    ...widgets,
-  ].slice(0, 5);
+    ...widgets.filter((widget) => widget.type !== "followup_chips").slice(0, 4),
+    followups,
+  ];
 }
 
 function shouldShowSignalStatusWidget(

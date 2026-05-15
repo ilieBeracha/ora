@@ -1,6 +1,7 @@
 import { assertApprovedPayload } from "@/lib/approval/guard";
 import { prisma } from "@/lib/db";
 import { Prisma } from "@/lib/generated/prisma/client";
+import { REVIEW_OUTCOME_PENDING_SUMMARY } from "@/lib/signals/outcome-guidance";
 import { setProductReferenceMetafield, verifyProductReferenceMetafield } from "@/lib/shopify/client";
 
 type ShopifyProductReferencePayload = {
@@ -205,8 +206,7 @@ async function executeOraOperatorReviewBatch(
         reviewBatchStarted: true,
         affectedCount: payload.args.affectedCount ?? null,
       } as Prisma.InputJsonValue,
-      summary:
-        "Ora started the approved operator review batch. Outcome is pending until the review is completed and Signals are scanned again.",
+      summary: REVIEW_OUTCOME_PENDING_SUMMARY,
     },
   });
 

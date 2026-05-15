@@ -4,6 +4,12 @@ import { ExternalLink } from "lucide-react";
 import type { ChatWidget } from "@/lib/chat/widgets";
 
 import { ChatOpenButton } from "@/components/chat-open-button";
+import {
+  chatTriggerAttributes,
+  chatWidgetClassName,
+  summarizeProductCard,
+  type WidgetChatTriggerProps,
+} from "@/components/widgets/chat-trigger";
 import { formatWidgetValue } from "@/components/widgets/format";
 
 type ProductCardProps = Extract<ChatWidget, { type: "product_card" }>["props"];
@@ -18,17 +24,36 @@ export function ProductCardWidget({
   stock,
   metrics,
   hint,
-}: ProductCardProps) {
+  chatOpenEnabled = true,
+}: ProductCardProps & WidgetChatTriggerProps) {
   return (
     <section
-      className="chat-widget chat-widget-product"
-      data-chat-explain="true"
-      data-chat-source="chat-widget"
-      data-chat-title={name}
-      data-chat-description={subtitle}
-      data-chat-prompt={`Explain this product widget for "${name}" and what I should look at next.`}
+      className={chatWidgetClassName(
+        "chat-widget chat-widget-product",
+        chatOpenEnabled,
+      )}
+      {...chatTriggerAttributes({
+        enabled: chatOpenEnabled,
+        title: name,
+        description: subtitle,
+        prompt: `Explain this product widget for "${name}". Use the selected product facts first, then tell me what sales or inventory data to inspect next.`,
+        widgetType: "product_card",
+        dataSummary: summarizeProductCard({
+          name,
+          subtitle,
+          sku,
+          imageUrl,
+          url,
+          price,
+          stock,
+          metrics,
+          hint,
+        }),
+      })}
     >
-      <ChatOpenButton label={`Open ${name} in chat`} />
+      {chatOpenEnabled ? (
+        <ChatOpenButton label={`Open ${name} in chat`} />
+      ) : null}
       {imageUrl ? (
         <img className="chat-widget-product-image" src={imageUrl} alt="" />
       ) : null}

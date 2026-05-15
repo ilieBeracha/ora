@@ -1,6 +1,12 @@
 import type { ChatWidget } from "@/lib/chat/widgets";
 
 import { ChatOpenButton } from "@/components/chat-open-button";
+import {
+  chatTriggerAttributes,
+  chatWidgetClassName,
+  summarizeScorecardGrid,
+  type WidgetChatTriggerProps,
+} from "@/components/widgets/chat-trigger";
 import { formatDelta, formatWidgetValue } from "@/components/widgets/format";
 
 type ScorecardGridProps = Extract<
@@ -8,19 +14,33 @@ type ScorecardGridProps = Extract<
   { type: "scorecard_grid" }
 >["props"];
 
-export function ScorecardGridWidget({ title, cards }: ScorecardGridProps) {
+export function ScorecardGridWidget({
+  title,
+  cards,
+  chatOpenEnabled = true,
+}: ScorecardGridProps & WidgetChatTriggerProps) {
+  const chatTitle = title ?? "Scorecard";
+
   return (
     <section
-      className="chat-widget chat-widget-scorecard"
-      data-chat-explain="true"
-      data-chat-source="chat-widget"
-      data-chat-title={title ?? "Scorecard"}
-      data-chat-description={`${cards.length} metrics shown in this scorecard.`}
-      data-chat-prompt={`Explain this scorecard${
-        title ? `: ${title}` : ""
-      } and tell me what matters most.`}
+      className={chatWidgetClassName(
+        "chat-widget chat-widget-scorecard",
+        chatOpenEnabled,
+      )}
+      {...chatTriggerAttributes({
+        enabled: chatOpenEnabled,
+        title: chatTitle,
+        description: `${cards.length} metrics shown in this scorecard.`,
+        prompt: `Explain this scorecard${
+          title ? `: ${title}` : ""
+        }. Compare the selected metrics and tell me what matters most.`,
+        widgetType: "scorecard_grid",
+        dataSummary: summarizeScorecardGrid({ title, cards }),
+      })}
     >
-      <ChatOpenButton label={`Open ${title ?? "scorecard"} in chat`} />
+      {chatOpenEnabled ? (
+        <ChatOpenButton label={`Open ${title ?? "scorecard"} in chat`} />
+      ) : null}
       {title ? <div className="chat-widget-title">{title}</div> : null}
       <div className="chat-widget-scorecard-grid">
         {cards.map((card) => (

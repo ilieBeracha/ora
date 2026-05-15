@@ -6,11 +6,32 @@ import { PageHeader } from "@/components/page-header";
 import { StatusBadge } from "@/components/status-badge";
 import { requireCurrentUser } from "@/lib/auth/session";
 import { formatDate } from "@/lib/format";
+import {
+  getActionQueueItem,
+  summarizeActionQueue,
+} from "@/lib/signals/flow";
+import { buildActionOwnerSummary } from "@/lib/signals/owner-summary";
 import { listActionHistory } from "@/lib/signals/queries";
 
 export default async function ActionsPage() {
   const user = await requireCurrentUser();
   const actions = user.companyId ? await listActionHistory(user.companyId) : [];
+  const queueItems = actions.map((action) =>
+    getActionQueueItem(
+      action,
+      action.executions[0] ?? null,
+      action.outcomes[0] ?? null,
+    ),
+  );
+  const queueSummary = summarizeActionQueue(queueItems);
+  const highestPriority = queueItems
+    .map((item, index) => ({ item, action: actions[index] }))
+    .sort((a, b) => a.item.priority - b.item.priority)[0];
+  const actionRows = actions.map((action, index) => ({
+    action,
+    queueItem: queueItems[index],
+    summary: buildActionOwnerSummary(action),
+  }));
 
   return (
     <>
@@ -28,210 +49,235 @@ export default async function ActionsPage() {
           body="Actions appear after Ora creates an ActionPlan from a Signal."
         />
       ) : (
-        <div className="signal-list">
-          {actions.map((action) => {
-            const latestExecution = action.executions[0];
-            const latestOutcome = action.outcomes[0];
-            const needsApproval =
-              !action.approval &&
-              (action.status === "draft" ||
-                action.status === "approval_required");
-            const canRun = Boolean(
-              action.approval && !latestExecution && isExecutableActionPlan(action),
-            );
-            const nextStep = actionNextStep(action, latestExecution);
+        <>
+          <section
+            className="action-command-center"
+            data-chat-explain="true"
+            data-chat-source="action-summary"
+            data-chat-title="Action queue"
+            data-chat-description={`${queueSummary.needsApproval} need approval, ${queueSummary.readyToRun} ready to run, ${queueSummary.watching} need store changes before another scan, ${queueSummary.outcomePending} waiting on outcome scan, ${queueSummary.blocked} blocked.`}
+            data-chat-prompt="Summarize the action queue. Start with what needs approval, what is ready to run, what needs store changes before another scan, and what outcome scan matters."
+          >
+            <ChatOpenButton
+              label="Open action queue in chat"
+              hint="Action queue"
+            />
+            <div className="action-command-copy">
+              <p className="kicker">Operating queue</p>
+              <h2>
+                {highestPriority
+                  ? highestPriority.item.title
+                  : "No action needs review"}
+              </h2>
+              <p>
+                {highestPriority
+                  ? `${highestPriority.action.signal.title}: ${highestPriority.item.body}`
+                  : "Every ActionPlan currently has a measured outcome."}
+              </p>
+            </div>
+            <div className="action-lane-grid" aria-label="Action queue lanes">
+              <ActionLane
+                label="Needs approval"
+                value={queueSummary.needsApproval}
+                detail="Review exact payloads"
+                tone="attention"
+              />
+              <ActionLane
+                label="Ready to run"
+                value={queueSummary.readyToRun}
+                detail="Approved and executable"
+                tone="ready"
+              />
+              <ActionLane
+                label="Store change"
+                value={queueSummary.watching}
+                detail="Fix data, then scan"
+                tone="watching"
+              />
+              <ActionLane
+                label="Blocked"
+                value={queueSummary.blocked}
+                detail="Needs operator review"
+                tone="blocked"
+              />
+              <ActionLane
+                label="Outcome pending"
+                value={queueSummary.outcomePending}
+                detail="Run happened; proof remains"
+                tone="watching"
+              />
+            </div>
+          </section>
 
-            return (
-              <article
-                className="panel panel-pad signal-card task-card signal-row"
-                data-chat-explain="true"
-                data-chat-source="action-card"
-                data-chat-title={action.signal.title}
-                data-chat-description={action.actionType.replaceAll("_", " ")}
-                data-chat-signal-id={action.signalId}
-                data-chat-action-plan-id={action.id}
-                data-chat-object-type="action_plan"
-                data-chat-object-id={action.id}
-                data-chat-prompt={`Explain this action history item for "${action.signal.title}" and what its approval, execution, and outcome mean.`}
-                key={action.id}
-              >
-                <ChatOpenButton
-                  label={`Open ${action.signal.title} action in chat`}
-                  hint="Plan status"
-                />
-                <div className="task-primary">
-                  <div className="task-copy">
-                    <div className="mb-3 flex flex-wrap items-center gap-2">
-                      <StatusBadge status={action.status} />
-                      {latestExecution ? (
-                        <StatusBadge status={latestExecution.status} />
-                      ) : null}
-                      {latestOutcome ? (
-                        <StatusBadge status={latestOutcome.status} />
-                      ) : null}
-                    </div>
-                    <h2 className="section-title">{action.signal.title}</h2>
-                    <p className="muted mt-2 text-sm">
-                      {action.actionType.replaceAll("_", " ")} · Created{" "}
-                      {formatDate(action.createdAt)}
-                    </p>
-                    <div className="action-card-next">
-                      <strong>{nextStep.title}</strong>
-                      <span>{nextStep.body}</span>
-                    </div>
-                  </div>
+          <div className="signal-list action-queue-list">
+            {actionRows.map(({ action, queueItem, summary }) => {
+              const canRun = queueItem.lane === "ready_to_run";
+              const needsApproval = queueItem.lane === "needs_approval";
+              const needsStoreChange =
+                queueItem.title === "Change store, then scan";
 
-                  <Link
-                    className={`button ${
-                      needsApproval || canRun ? "button-primary" : ""
-                    }`}
-                    href={`/signals/${action.signalId}`}
-                  >
-                    {needsApproval
-                      ? "Review and approve"
-                      : canRun
-                        ? "Run approved plan"
-                        : "Open plan"}
-                  </Link>
-                </div>
-
-                <div className="action-plan-flow" aria-label="Action plan flow">
-                  <ActionStep
-                    label="Review"
-                    state="complete"
-                    value="Prepared"
+              return (
+                <article
+                  className={`panel panel-pad signal-card task-card signal-row action-row action-row-${queueItem.lane}`}
+                  data-chat-explain="true"
+                  data-chat-source="action-card"
+                  data-chat-title={action.signal.title}
+                  data-chat-description={`${queueItem.label}: ${queueItem.body}. Affected: ${summary.affected.label}. Recorded: ${summary.recordedChange.title}.`}
+                  data-chat-signal-id={action.signalId}
+                  data-chat-action-plan-id={action.id}
+                  data-chat-object-type="action_plan"
+                  data-chat-object-id={action.id}
+                  data-chat-prompt={`Explain this action item for "${action.signal.title}". Start with the action log, what was affected, what has already changed or been recorded, and what remains.`}
+                  key={action.id}
+                >
+                  <ChatOpenButton
+                    label={`Open ${action.signal.title} action in chat`}
+                    hint="Plan status"
                   />
-                  <ActionStep
-                    label="Approve"
-                    state={action.approval ? "complete" : "current"}
-                    value={action.approval ? "Approved" : "Needed"}
-                  />
-                  <ActionStep
-                    label="Execute"
-                    state={
-                      latestExecution
-                        ? "complete"
-                        : canRun
-                          ? "current"
-                          : "waiting"
-                    }
-                    value={
-                      latestExecution
-                        ? latestExecution.status
-                        : canRun
-                          ? "Ready"
-                          : "Waiting"
-                    }
-                  />
-                </div>
-
-                <div className="task-details">
-                  <div className="task-detail">
-                    <p className="kicker">Approval</p>
-                    {action.approval ? (
-                      <p className="text-sm leading-6">
-                        {action.approval.approvedBy.email} ·{" "}
-                        {formatDate(action.approval.approvedAt)}
+                  <div className="task-primary">
+                    <div className="task-copy">
+                      <div className="mb-3 flex flex-wrap items-center gap-2">
+                        <span
+                          className={`flow-badge flow-badge-${laneState(
+                            queueItem.lane,
+                          )}`}
+                        >
+                          {queueItem.label}
+                        </span>
+                        <StatusBadge status={action.status} />
+                        <span
+                          className={`flow-badge flow-badge-${summary.tone}`}
+                        >
+                          {summary.affected.label}
+                        </span>
+                      </div>
+                      <h2 className="section-title">{action.signal.title}</h2>
+                      <p className="muted mt-2 text-sm">
+                        {action.actionType.replaceAll("_", " ")} · Created{" "}
+                        {formatDate(action.createdAt)}
                       </p>
-                    ) : action.status === "draft" ? (
-                      <p className="muted text-sm">Review plan details.</p>
-                    ) : (
-                      <p className="muted text-sm">Awaiting approval.</p>
-                    )}
+                      <div className="action-card-next">
+                        <strong>{summary.remainingWork.title}</strong>
+                        <span>{summary.remainingWork.body}</span>
+                      </div>
+                    </div>
+
+                    <Link
+                      className={`button ${
+                        needsApproval || canRun || needsStoreChange
+                          ? "button-primary"
+                          : ""
+                      }`}
+                      href={`/signals/${action.signalId}`}
+                    >
+                      {queueItem.ctaLabel}
+                    </Link>
                   </div>
-                  <div className="task-detail">
-                    <p className="kicker">Execution</p>
-                    <p className="text-sm leading-6">
-                      {latestExecution?.errorMessage ??
-                        latestExecution?.status ??
-                        "No execution yet."}
-                    </p>
+
+                  <div
+                    className="action-effect-grid"
+                    aria-label="Action effect"
+                  >
+                    <ActionEffectCell
+                      label="Affected"
+                      title={summary.affected.label}
+                      body={summary.affected.detail}
+                    />
+                    <ActionEffectCell
+                      label="Recorded"
+                      title={summary.recordedChange.title}
+                      body={summary.recordedChange.body}
+                    />
+                    <ActionEffectCell
+                      label="Left"
+                      title={summary.remainingWork.title}
+                      body={summary.remainingWork.body}
+                    />
                   </div>
-                  <div className="task-detail">
-                    <p className="kicker">Outcome</p>
-                    <p className="text-sm leading-6">
-                      {latestOutcome?.summary ?? "Outcome not measured yet."}
-                    </p>
+
+                  <div
+                    className="action-log-list"
+                    aria-label="Recorded action log"
+                  >
+                    {summary.logEntries.map((entry) => (
+                      <ActionLogEntry entry={entry} key={entry.label} />
+                    ))}
                   </div>
-                </div>
-              </article>
-            );
-          })}
-        </div>
+                </article>
+              );
+            })}
+          </div>
+        </>
       )}
     </>
   );
 }
 
-function ActionStep({
+function ActionLane({
   label,
-  state,
   value,
+  detail,
+  tone,
 }: {
   label: string;
-  state: "complete" | "current" | "waiting";
-  value: string;
+  value: number;
+  detail: string;
+  tone: "attention" | "ready" | "blocked" | "watching";
 }) {
   return (
-    <div className={`action-plan-step action-plan-step-${state}`}>
+    <div className={`action-lane action-lane-${tone}`}>
       <span>{label}</span>
-      <strong>{value.replaceAll("_", " ")}</strong>
+      <strong>{value}</strong>
+      <small>{detail}</small>
     </div>
   );
 }
 
-function actionNextStep(
-  action: Awaited<ReturnType<typeof listActionHistory>>[number],
-  latestExecution: Awaited<
-    ReturnType<typeof listActionHistory>
-  >[number]["executions"][number] | undefined,
-) {
-  if (!action.approval) {
-    return {
-      title: "Next: approve the plan",
-      body: "Open the Signal, review the exact plan, then approve it.",
-    };
-  }
-
-  if (!latestExecution && isExecutableActionPlan(action)) {
-    return {
-      title: "Next: run the approved plan",
-      body:
-        action.provider === "ora"
-          ? "Starts the operator review batch in Ora."
-          : "Runs the approved connector action.",
-    };
-  }
-
-  if (!latestExecution) {
-    return {
-      title: "Execution not wired",
-      body: "The plan is approved, but this provider has no executor yet.",
-    };
-  }
-
-  return {
-    title: "Next: watch outcome",
-    body: "Execution has run; outcome tracking is the remaining step.",
-  };
-}
-
-function isExecutableActionPlan(action: {
-  provider: string;
-  executionPayload: unknown;
+function ActionEffectCell({
+  label,
+  title,
+  body,
+}: {
+  label: string;
+  title: string;
+  body: string;
 }) {
-  const payload = asRecord(action.executionPayload);
-
   return (
-    (action.provider === "ora" &&
-      payload?.toolName === "ora_prepare_operator_review_batch") ||
-    (action.provider === "shopify" &&
-      payload?.toolName === "shopify_setProductReferenceMetafield")
+    <div className="action-effect-cell">
+      <span>{label}</span>
+      <strong>{title}</strong>
+      <p>{body}</p>
+    </div>
   );
 }
 
-function asRecord(value: unknown): Record<string, unknown> | null {
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : null;
+function ActionLogEntry({
+  entry,
+}: {
+  entry: ReturnType<typeof buildActionOwnerSummary>["logEntries"][number];
+}) {
+  return (
+    <div className={`action-log-entry action-log-entry-${entry.tone}`}>
+      <div>
+        <span>{entry.label}</span>
+        <strong>{entry.status}</strong>
+      </div>
+      <p>{entry.body}</p>
+      {entry.meta ? <small>{entry.meta}</small> : null}
+    </div>
+  );
+}
+
+function laneState(lane: ReturnType<typeof getActionQueueItem>["lane"]) {
+  if (lane === "blocked") return "blocked";
+  if (
+    lane === "ready_to_run" ||
+    lane === "needs_approval" ||
+    lane === "outcome_pending" ||
+    lane === "watching"
+  ) {
+    return "current";
+  }
+
+  return "complete";
 }

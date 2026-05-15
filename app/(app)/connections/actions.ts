@@ -217,6 +217,8 @@ function signalDetectionSummary(result: {
     newCount: number;
     vipCount: number;
   } | null;
+  outcomeNoChange: number;
+  outcomesResolved: number;
   productHealth: number;
   signalCount: number;
   signalCountWithLifecycle: number;
@@ -258,6 +260,7 @@ function signalDetectionSummary(result: {
     const lifecycleNote = result.lifecycleCounts
       ? ` Customer mix: ${result.lifecycleCounts.newCount} new, ${result.lifecycleCounts.activeRepeatCount} active repeat, ${result.lifecycleCounts.atRiskCount} at-risk, ${result.lifecycleCounts.churnedCount} churned.`
       : "";
+    const outcomeNote = outcomeScanSummary(result);
     const errorNote = result.customerLifecycleError
       ? ` Customer lifecycle scan failed: ${result.customerLifecycleError}`
       : "";
@@ -265,25 +268,49 @@ function signalDetectionSummary(result: {
     return `${base} Found ${result.signalCountWithLifecycle} ${pluralize(
       "Signal",
       result.signalCountWithLifecycle,
-    )}${parts.length ? `: ${parts.join(", ")}.` : "."}${lifecycleNote}${errorNote}`;
+    )}${parts.length ? `: ${parts.join(", ")}.` : "."}${lifecycleNote}${outcomeNote}${errorNote}`;
   }
+
+  const outcomeNote = outcomeScanSummary(result);
 
   if (
     result.activeProducts > 0 &&
     result.activeProducts === result.activeGiftCards
   ) {
-    return `${base} The only active product is a Gift Card, so Ora skipped product health and inventory checks. Found 0 Signals.`;
+    return `${base} The only active product is a Gift Card, so Ora skipped product health and inventory checks. Found 0 Signals.${outcomeNote}`;
   }
 
   if (result.activeProducts === 0) {
-    return `${base} Active-only detection found 0 eligible products, so no Signals were created.`;
+    return `${base} Active-only detection found 0 eligible products, so no Signals were created.${outcomeNote}`;
   }
 
   if (result.customerLifecycleError) {
-    return `${base} No product Signals were found. Customer lifecycle scan failed: ${result.customerLifecycleError}`;
+    return `${base} No product Signals were found.${outcomeNote} Customer lifecycle scan failed: ${result.customerLifecycleError}`;
   }
 
-  return `${base} No products or customer groups matched the current Signal rules. Found 0 Signals.`;
+  return `${base} No products or customer groups matched the current Signal rules. Found 0 Signals.${outcomeNote}`;
+}
+
+function outcomeScanSummary(result: {
+  outcomeNoChange: number;
+  outcomesResolved: number;
+}) {
+  const total = result.outcomeNoChange + result.outcomesResolved;
+  if (!total) return "";
+
+  const parts = [
+    result.outcomesResolved
+      ? `${result.outcomesResolved} resolved`
+      : null,
+    result.outcomeNoChange
+      ? `${result.outcomeNoChange} still actionable`
+      : null,
+  ].filter(Boolean);
+
+  return ` Outcome scan measured ${total} pending ${pluralize(
+    "Outcome",
+    total,
+  )}: ${parts.join(", ")}.`;
 }
 
 function pluralize(label: string, count: number) {

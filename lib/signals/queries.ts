@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/db";
+import { isGeneratedFollowUpActionPlanPayload } from "@/lib/signals/outcome-guidance";
 
 const severityRank = {
   critical: 4,
@@ -36,18 +37,37 @@ export async function listSignals(companyId: string, status = "open") {
     ? status
     : "open";
 
-  return prisma.signal.findMany({
+  const signals = await prisma.signal.findMany({
     where: { companyId, status: selectedStatus as never },
     include: {
       evidence: { orderBy: { observedAt: "desc" }, take: 1 },
       recommendations: { take: 1 },
+      outcomes: { orderBy: { measuredAt: "desc" }, take: 1 },
+      actionPlans: {
+        orderBy: { createdAt: "desc" },
+        take: 5,
+        include: {
+          approval: true,
+          executions: { orderBy: { executedAt: "desc" }, take: 1 },
+          outcomes: { orderBy: { measuredAt: "desc" }, take: 1 },
+        },
+      },
     },
     orderBy: [{ status: "asc" }, { detectedAt: "desc" }],
   });
+
+  return signals.map((signal) => ({
+    ...signal,
+    actionPlans: signal.actionPlans
+      .filter((actionPlan) =>
+        !isGeneratedFollowUpActionPlanPayload(actionPlan.previewPayload),
+      )
+      .slice(0, 1),
+  }));
 }
 
 export async function getSignalDetail(companyId: string, id: string) {
-  return prisma.signal.findFirst({
+  const signal = await prisma.signal.findFirst({
     where: { id, companyId },
     include: {
       evidence: { orderBy: { observedAt: "desc" } },
@@ -64,10 +84,19 @@ export async function getSignalDetail(companyId: string, id: string) {
       outcomes: { orderBy: { measuredAt: "desc" } },
     },
   });
+
+  if (!signal) return null;
+
+  return {
+    ...signal,
+    actionPlans: signal.actionPlans.filter((actionPlan) =>
+      !isGeneratedFollowUpActionPlanPayload(actionPlan.previewPayload),
+    ),
+  };
 }
 
 export async function listActionHistory(companyId: string) {
-  return prisma.actionPlan.findMany({
+  const actions = await prisma.actionPlan.findMany({
     where: {
       signal: {
         companyId,
@@ -82,4 +111,8 @@ export async function listActionHistory(companyId: string) {
     },
     orderBy: { updatedAt: "desc" },
   });
+
+  return actions.filter(
+    (action) => !isGeneratedFollowUpActionPlanPayload(action.previewPayload),
+  );
 }

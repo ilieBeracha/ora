@@ -9,6 +9,11 @@ import {
 } from "@/lib/signals/product-health";
 import { buildStoreSignalActionPlan } from "@/lib/signals/action-plans";
 import { syncCustomerLifecycleForConnection } from "@/lib/lifecycle/sync";
+import {
+  buildReviewOutcomeMetrics,
+  reviewOutcomeStatusForDetection,
+  summarizeReviewOutcomeScan,
+} from "@/lib/signals/outcome-guidance";
 
 type StoreSignalCandidate = ProductHealthCandidate | StoreCatalogCandidate;
 
@@ -66,6 +71,12 @@ export async function detectSignalsForConnection(shopifyConnectionId: string) {
       status: "open",
     },
     data: { status: "resolved" },
+  });
+
+  const outcomeScan = await reconcilePendingStoreReviewOutcomes({
+    companyId,
+    currentStoreSignalTypes,
+    shopifyConnectionId,
   });
 
   for (const candidate of productHealth) {
@@ -219,10 +230,92 @@ export async function detectSignalsForConnection(shopifyConnectionId: string) {
     customersClassified: lifecycleResult?.purchasingCustomers ?? 0,
     customersFetched: lifecycleResult?.customersFetched ?? 0,
     lifecycleCounts: lifecycleResult?.counts ?? null,
+    outcomeNoChange: outcomeScan.noChange,
+    outcomesResolved: outcomeScan.resolved,
     signalCountWithLifecycle:
       productHealth.length + draftCatalog.length + (lifecycleResult?.candidates ?? 0),
     scannedProducts: products.length,
   };
+}
+
+async function reconcilePendingStoreReviewOutcomes({
+  companyId,
+  currentStoreSignalTypes,
+  shopifyConnectionId,
+}: {
+  companyId: string;
+  currentStoreSignalTypes: string[];
+  shopifyConnectionId: string;
+}) {
+  const currentTypes = new Set(currentStoreSignalTypes);
+  const pendingOutcomes = await prisma.outcome.findMany({
+    where: {
+      status: { in: ["pending", "no_change", "worsened"] },
+      signal: {
+        companyId,
+        affectedObjectType: "store",
+        affectedObjectId: shopifyConnectionId,
+        status: { not: "ignored" },
+        type: { in: managedStoreSignalTypes },
+      },
+      actionPlan: {
+        provider: "ora",
+        executions: {
+          some: {
+            status: "success",
+            toolName: "ora_prepare_operator_review_batch",
+          },
+        },
+      },
+    },
+    include: {
+      signal: {
+        select: {
+          id: true,
+          type: true,
+        },
+      },
+    },
+  });
+  const measuredAt = new Date();
+  let noChange = 0;
+  let resolved = 0;
+
+  for (const outcome of pendingOutcomes) {
+    const stillDetected = currentTypes.has(outcome.signal.type);
+    const status = reviewOutcomeStatusForDetection(stillDetected);
+
+    if (stillDetected) {
+      noChange += 1;
+    } else {
+      resolved += 1;
+    }
+
+    await prisma.$transaction([
+      prisma.outcome.update({
+        where: { id: outcome.id },
+        data: {
+          measuredAt,
+          metricsJson: buildReviewOutcomeMetrics({
+            measuredAt,
+            previousMetrics: outcome.metricsJson,
+            signalType: outcome.signal.type,
+            stillDetected,
+          }) as Prisma.InputJsonValue,
+          status,
+          summary: summarizeReviewOutcomeScan(stillDetected),
+        },
+      }),
+      prisma.signal.update({
+        where: { id: outcome.signalId },
+        data: {
+          status: stillDetected ? "open" : "resolved",
+        },
+      }),
+    ]);
+  }
+
+  return { noChange, resolved };
 }
 
 async function upsertStoreRecommendation(
@@ -277,7 +370,10 @@ async function upsertStoreActionPlan({
       provider: plan.provider,
     },
     orderBy: { createdAt: "desc" },
-    include: { approval: true },
+    include: {
+      approval: true,
+      outcomes: { orderBy: { measuredAt: "desc" }, take: 1 },
+    },
   });
 
   if (existing?.approval || existing?.status === "executed") {
