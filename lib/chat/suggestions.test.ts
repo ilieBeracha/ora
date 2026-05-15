@@ -48,6 +48,17 @@ describe("suggestionsForContext", () => {
   });
 
   it("returns step-specific questions for each lifecycle step", () => {
+    const detected = suggestionsForContext({
+      source: "signal-lifecycle",
+      title: "Detected",
+      description: "3 evidence records",
+    });
+    expect(detected.map((item) => item.label)).toEqual([
+      "What detected",
+      "Confidence",
+      "Severity",
+    ]);
+
     const evidence = suggestionsForContext({
       source: "signal-lifecycle",
       title: "Evidence",

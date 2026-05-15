@@ -47,7 +47,7 @@ export default async function ActionsPage() {
                 data-chat-prompt={`Explain this action history item for "${action.signal.title}" and what its approval, execution, and outcome mean.`}
                 key={action.id}
               >
-                <ChatOpenButton label={`Open ${action.signal.title} action in chat`} />
+                <ChatOpenButton label={`Open ${action.signal.title} action in chat`} hint="This action" />
                 <div className="task-primary">
                   <div className="task-copy">
                     <div className="mb-3 flex flex-wrap items-center gap-2">

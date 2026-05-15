@@ -1,18 +1,12 @@
 import {
-  Activity,
   CheckCircle2,
-  ClipboardCheck,
   Database,
-  FileCheck2,
   Gauge,
   Lightbulb,
-  Play,
-  ShieldCheck,
   Target,
   UsersRound,
 } from "lucide-react";
 import { notFound } from "next/navigation";
-import type { ReactNode } from "react";
 
 import { ChatOpenButton } from "@/components/chat-open-button";
 import { PageHeader } from "@/components/page-header";
@@ -20,6 +14,22 @@ import { RiskBadge, SeverityBadge, StatusBadge } from "@/components/status-badge
 import { canManageApp, requireCurrentUser } from "@/lib/auth/session";
 import { formatDate, formatMoneyFromCents, titleCase } from "@/lib/format";
 import { getSignalDetail } from "@/lib/signals/queries";
+import {
+  computeDecisionGuidance,
+  computeDecisionLabel,
+  computeStages,
+  executionButtonLabel,
+  isApprovableActionPlan,
+  isExecutableActionPlan,
+  summarizeActionPlanPayload,
+  summarizeActionPlanPlain,
+} from "@/lib/signals/decision";
+import {
+  buildEvidenceFacts,
+  getLatestEvidenceObservedAt,
+  getTopEvidenceReason,
+  uniqueValues,
+} from "@/lib/signals/evidence-facts";
 import {
   approveActionPlanAction,
   executeActionPlanAction,
@@ -49,8 +59,6 @@ type CustomerMemberExample = {
   previousStage: string | null;
 };
 
-type LifecycleState = "complete" | "current" | "waiting";
-
 export default async function SignalDetailPage({
   params,
 }: {
@@ -69,61 +77,45 @@ export default async function SignalDetailPage({
   const latestOutcome = signal.outcomes[0] ?? actionPlan?.outcomes[0];
   const canManage = canManageApp(user.role);
   const canExecutePlan = isExecutableActionPlan(actionPlan);
+  const canApprovePlan = isApprovableActionPlan(actionPlan);
   const evidencePayload = getPrimaryEvidencePayload(
     signal.evidence.map((item) => item.rawPayload),
   );
   const evidenceExamples = parseEvidenceExamples(evidencePayload?.examples);
+  const evidenceFacts = buildEvidenceFacts(signal.evidence);
+  const evidenceProviders = uniqueValues(
+    signal.evidence.map((item) => item.provider),
+  );
+  const topEvidenceReason = getTopEvidenceReason(evidenceExamples);
+  const latestEvidenceObservedAt = getLatestEvidenceObservedAt(signal.evidence);
   const customerMembers = parseCustomerMembers(customerGroup?.membersJson);
   const detectedCount = numberValue(evidencePayload?.count);
   const affectedCount = customerGroup?.memberCount ?? detectedCount;
   const activeProductCount = numberValue(evidencePayload?.activeProductCount);
   const confidencePercent = Math.round(signal.confidence * 100);
-  const lifecycle = [
-    {
-      label: "Signal",
-      detail: "Detected",
-      icon: Target,
-      state: "complete" as LifecycleState,
-    },
-    {
-      label: "Evidence",
-      detail: `${signal.evidence.length} record${
-        signal.evidence.length === 1 ? "" : "s"
-      }`,
-      icon: Database,
-      state: signal.evidence.length ? "complete" : "waiting",
-    },
-    {
-      label: "Recommendation",
-      detail: recommendation ? "Ready" : "Missing",
-      icon: Lightbulb,
-      state: recommendation ? "complete" : "waiting",
-    },
-    {
-      label: "Action plan",
-      detail: actionPlan ? titleCase(actionPlan.status) : "Not prepared",
-      icon: ClipboardCheck,
-      state: actionPlan ? "current" : "waiting",
-    },
-    {
-      label: "Approval",
-      detail: actionPlan?.approval ? "Approved" : "Required",
-      icon: ShieldCheck,
-      state: actionPlan?.approval ? "complete" : actionPlan ? "current" : "waiting",
-    },
-    {
-      label: "Execution",
-      detail: latestExecution ? titleCase(latestExecution.status) : "Not run",
-      icon: Play,
-      state: latestExecution ? "complete" : actionPlan?.approval ? "current" : "waiting",
-    },
-    {
-      label: "Outcome",
-      detail: latestOutcome ? titleCase(latestOutcome.status) : "Not measured",
-      icon: Activity,
-      state: latestOutcome ? "complete" : latestExecution ? "current" : "waiting",
-    },
-  ];
+  const planPlain = summarizeActionPlanPlain(actionPlan);
+  const decisionInput = {
+    evidenceCount: signal.evidence.length,
+    hasActionPlan: Boolean(actionPlan),
+    hasApproval: Boolean(actionPlan?.approval),
+    hasExecution: Boolean(latestExecution),
+    executionStatus: latestExecution?.status ?? null,
+    hasOutcome: Boolean(latestOutcome),
+    outcomeStatus: latestOutcome?.status ?? null,
+    canExecutePlan,
+  };
+  const stages = computeStages(decisionInput);
+  const decisionLabel = computeDecisionLabel(decisionInput);
+  const guidance = computeDecisionGuidance(decisionInput);
+  const payloadSummary = summarizeActionPlanPayload(
+    actionPlan?.actionType,
+    actionPlan?.previewPayload,
+    actionPlan?.provider,
+  );
+  const showHistory =
+    Boolean(actionPlan?.approval) ||
+    Boolean(latestExecution) ||
+    Boolean(latestOutcome);
 
   return (
     <>
@@ -146,7 +138,7 @@ export default async function SignalDetailPage({
 
       <div className="signal-detail-view">
         <section
-          className="signal-hero-panel"
+          className="signal-decision"
           data-chat-explain="true"
           data-chat-source="signal-detail-hero"
           data-chat-title={signal.title}
@@ -157,497 +149,112 @@ export default async function SignalDetailPage({
           data-chat-object-id={signal.id}
           data-chat-prompt={`Explain this Signal detail: ${signal.title}. Summarize what matters and what I should inspect next.`}
         >
-          <ChatOpenButton label="Open Signal summary in chat" />
-          <div className="signal-hero-main">
-            <div className="signal-hero-badges">
-              <SeverityBadge severity={signal.severity} />
-              <StatusBadge status={signal.status} />
-              <StatusBadge status={signal.category} />
-            </div>
-            <h2>{signal.summary}</h2>
-            <p>
-              Ora is treating this as a {titleCase(signal.category)} Signal
-              with {confidencePercent}% confidence. Review the evidence, then
-              move only one exact action through approval.
-            </p>
-          </div>
+          <ChatOpenButton label="Open Signal summary in chat" hint="Signal summary" />
 
-          <div className="signal-score-grid">
-            <MetricTile
-              label="Affected"
-              value={affectedCount ? String(affectedCount) : "Unknown"}
-              hint={affectedLabel(signal.affectedObjectType)}
-            />
-            <MetricTile
-              label="Confidence"
-              value={`${confidencePercent}%`}
-              hint="Signal ranking"
-              meter={confidencePercent}
-            />
-            <MetricTile
-              label="Impact"
-              value={formatMoneyFromCents(signal.impactEstimateCents)}
-              hint="Estimate"
-            />
-            <MetricTile
-              label="Detected"
-              value={formatDate(signal.detectedAt)}
-              hint="Last scan"
-            />
-          </div>
-        </section>
-
-        <section className="signal-lifecycle" aria-label="Signal lifecycle">
-          {lifecycle.map((item) => {
-            const Icon = item.icon;
-            return (
-              <div
-                className={`signal-lifecycle-item signal-lifecycle-${item.state}`}
-                data-chat-explain="true"
-                data-chat-source="signal-lifecycle"
-                data-chat-title={item.label}
-                data-chat-description={item.detail}
-                data-chat-signal-id={signal.id}
-                data-chat-action-plan-id={actionPlan?.id}
-                data-chat-object-type="signal_lifecycle_step"
-                data-chat-object-id={`${signal.id}:${item.label
-                  .toLowerCase()
-                  .replaceAll(" ", "_")}`}
-                data-chat-prompt={`Explain the ${item.label} step for this Signal: ${signal.title}. Current state: ${item.detail}.`}
-                key={item.label}
-              >
-                <ChatOpenButton label={`Open ${item.label} step in chat`} />
-                <span className="signal-lifecycle-icon">
-                  <Icon size={16} aria-hidden="true" />
+          <header className="signal-decision-head">
+            <div className="signal-decision-headline">
+              <div className="signal-decision-badges">
+                <span
+                  className={`signal-pill signal-pill-${decisionLabel.tone}`}
+                >
+                  {decisionLabel.label}
                 </span>
+                <SeverityBadge severity={signal.severity} />
+                <StatusBadge status={signal.status} />
+                <StatusBadge status={signal.category} />
+              </div>
+              <h2>{signal.summary}</h2>
+              <p className="signal-decision-meta">
+                <span>{titleCase(signal.severity)} severity</span>
+                <span>{confidencePercent}% confidence</span>
                 <span>
-                  <strong>{item.label}</strong>
-                  <small>{item.detail}</small>
+                  {formatMoneyFromCents(signal.impactEstimateCents)} impact
                 </span>
-              </div>
-            );
-          })}
-        </section>
-
-        <div className="signal-detail-grid">
-          <div className="signal-detail-main">
-            <section
-              className="signal-section-card"
-              data-chat-explain="true"
-              data-chat-source="signal-section"
-              data-chat-title="What happened"
-              data-chat-description={signal.summary}
-              data-chat-signal-id={signal.id}
-              data-chat-action-plan-id={actionPlan?.id}
-              data-chat-object-type="signal"
-              data-chat-object-id={signal.id}
-              data-chat-prompt={`Explain what happened in this Signal: ${signal.title}.`}
-            >
-              <SectionHeader
-                icon={<Target size={18} aria-hidden="true" />}
-                label="What happened"
-                title={signal.title}
-              />
-              <p className="signal-section-copy">{signal.summary}</p>
-              <div className="signal-mini-grid">
-                <FactMini label="Type" value={titleCase(signal.type)} />
-                <FactMini
-                  label="Affected object"
-                  value={titleCase(signal.affectedObjectType)}
-                />
-                <FactMini label="Updated" value={formatDate(signal.updatedAt)} />
-                <FactMini
-                  label={customerGroup ? "Customer group" : "Active catalog size"}
-                  value={
-                    customerGroup
-                      ? `${customerGroup.memberCount} members`
-                      : activeProductCount
-                        ? String(activeProductCount)
-                        : "Unknown"
-                  }
-                />
-              </div>
-            </section>
-
-            <section
-              className="signal-section-card"
-              data-chat-explain="true"
-              data-chat-source="signal-section"
-              data-chat-title="Evidence"
-              data-chat-description="Observed facts behind the Signal."
-              data-chat-signal-id={signal.id}
-              data-chat-action-plan-id={actionPlan?.id}
-              data-chat-object-type="signal"
-              data-chat-object-id={signal.id}
-              data-chat-prompt={`Explain the evidence for this Signal: ${signal.title}.`}
-            >
-              <SectionHeader
-                icon={<Database size={18} aria-hidden="true" />}
-                label="Evidence"
-                title="Observed facts behind the Signal"
-              />
-              <div className="evidence-visual-grid">
-                {signal.evidence.map((evidence) => (
-                  <article className="evidence-panel" key={evidence.id}>
-                    <div className="evidence-panel-top">
-                      <div>
-                        <p className="kicker">{titleCase(evidence.evidenceType)}</p>
-                        <p>{evidence.displayText}</p>
-                      </div>
-                      <div className="evidence-badge-stack">
-                        <StatusBadge status={evidence.provider} />
-                        <span className="muted text-sm">
-                          {formatDate(evidence.observedAt)}
-                        </span>
-                      </div>
-                    </div>
-                  </article>
-                ))}
-              </div>
-
-              {evidenceExamples.length ? (
-                <div className="signal-examples">
-                  <div className="signal-examples-header">
-                    <h3>Example products</h3>
-                    <span>{evidenceExamples.length} shown from evidence</span>
-                  </div>
-                  <div className="signal-example-list">
-                    {evidenceExamples.map((example, index) => (
-                      <article
-                        className="signal-example-row"
-                        key={`${example.title}-${index}`}
-                      >
-                        <div className="signal-example-number">
-                          {String(index + 1).padStart(2, "0")}
-                        </div>
-                        <div>
-                          <h4>{example.title}</h4>
-                          <div className="signal-example-meta">
-                            <span>{example.productType ?? "No product type"}</span>
-                            <span>
-                              {example.totalInventory == null
-                                ? "Inventory unknown"
-                                : `${example.totalInventory} units`}
-                            </span>
-                            <span>
-                              {example.tags == null
-                                ? "Tags unknown"
-                                : `${example.tags} tag${example.tags === 1 ? "" : "s"}`}
-                            </span>
-                            <span>
-                              {example.descriptionLength == null
-                                ? "Copy unknown"
-                                : `${example.descriptionLength} copy chars`}
-                            </span>
-                          </div>
-                          {example.reasons.length ? (
-                            <div className="signal-reason-row">
-                              {example.reasons.map((reason) => (
-                                <span className="badge" key={reason}>
-                                  {reason}
-                                </span>
-                              ))}
-                            </div>
-                          ) : null}
-                        </div>
-                      </article>
-                    ))}
-                  </div>
-                </div>
-              ) : null}
-            </section>
-
-            {customerGroup ? (
-              <section
-                className="signal-section-card customer-group-card"
-                data-chat-explain="true"
-                data-chat-source="signal-section"
-                data-chat-title={customerGroup.name}
-                data-chat-description={customerGroup.description}
-                data-chat-signal-id={signal.id}
-                data-chat-action-plan-id={actionPlan?.id}
-                data-chat-object-type="customer_group"
-                data-chat-object-id={customerGroup.id}
-                data-chat-prompt={`Explain this customer group and what grouped actions make sense: ${customerGroup.name}.`}
-              >
-                <SectionHeader
-                  icon={<UsersRound size={18} aria-hidden="true" />}
-                  label="Customer group"
-                  title={customerGroup.name}
-                />
-                <p className="signal-section-copy">{customerGroup.description}</p>
-                <div className="signal-mini-grid customer-group-metrics">
-                  <FactMini
-                    label="Members"
-                    value={String(customerGroup.memberCount)}
-                  />
-                  <FactMini
-                    label="Estimated value"
-                    value={formatMoneyFromCents(customerGroup.estimatedRevenueCents)}
-                  />
-                  <FactMini
-                    label="Status"
-                    value={titleCase(customerGroup.status)}
-                  />
-                  <FactMini
-                    label="Built"
-                    value={formatDate(customerGroup.builtAt)}
-                  />
-                </div>
-                {customerMembers.length ? (
-                  <div className="signal-examples">
-                    <div className="signal-examples-header">
-                      <h3>Member sample</h3>
-                      <span>{customerMembers.length} shown from group snapshot</span>
-                    </div>
-                    <div className="signal-example-list">
-                      {customerMembers.slice(0, 8).map((member, index) => (
-                        <article
-                          className="signal-example-row customer-member-row"
-                          key={`${member.shopifyCustomerId}-${index}`}
-                        >
-                          <div className="signal-example-number">
-                            {String(index + 1).padStart(2, "0")}
-                          </div>
-                          <div>
-                            <h4>{member.name ?? member.email ?? "Shopify customer"}</h4>
-                            <div className="signal-example-meta">
-                              <span>{titleCase(member.lifecycleStage)}</span>
-                              <span>
-                                {member.orderCount == null
-                                  ? "Orders unknown"
-                                  : `${member.orderCount} orders`}
-                              </span>
-                              <span>
-                                {formatCustomerSpend(
-                                  member.totalSpentCents,
-                                  member.currency,
-                                )}
-                              </span>
-                              <span>
-                                {member.lastOrderAt
-                                  ? `Last order ${formatDate(member.lastOrderAt)}`
-                                  : "No last order date"}
-                              </span>
-                            </div>
-                            {member.lifecycleTags.length ? (
-                              <div className="signal-reason-row">
-                                {member.lifecycleTags.map((tag) => (
-                                  <span className="badge" key={tag}>
-                                    {titleCase(tag)}
-                                  </span>
-                                ))}
-                              </div>
-                            ) : null}
-                          </div>
-                        </article>
-                      ))}
-                    </div>
-                  </div>
+                {affectedCount ? (
+                  <span>
+                    {affectedCount} {affectedLabel(signal.affectedObjectType).toLowerCase()}
+                  </span>
                 ) : null}
-              </section>
-            ) : null}
-
-            <div className="signal-work-grid">
-              <section
-                className="signal-section-card"
-                data-chat-explain="true"
-                data-chat-source="signal-section"
-                data-chat-title="Recommended action"
-                data-chat-description={
-                  recommendation?.reasoning ??
-                  "No recommendation is available for this Signal yet."
-                }
-                data-chat-signal-id={signal.id}
-                data-chat-action-plan-id={actionPlan?.id}
-                data-chat-object-type="recommendation"
-                data-chat-object-id={recommendation?.id ?? signal.id}
-                data-chat-prompt={`Explain the recommended action for this Signal: ${signal.title}.`}
-              >
-                <SectionHeader
-                  icon={<Lightbulb size={18} aria-hidden="true" />}
-                  label="Recommended action"
-                  title={recommendation?.title ?? "No recommendation yet"}
-                />
-                {recommendation ? (
-                  <>
-                    <div className="signal-inline-badges">
-                      <RiskBadge risk={recommendation.riskLevel} />
-                      <span className="badge">
-                        {Math.round(recommendation.confidence * 100)}% confidence
-                      </span>
-                    </div>
-                    <p className="signal-section-copy">
-                      {recommendation.reasoning}
-                    </p>
-                    {recommendation.expectedImpact ? (
-                      <div className="signal-callout">
-                        <CheckCircle2 size={16} aria-hidden="true" />
-                        <p>{recommendation.expectedImpact}</p>
-                      </div>
-                    ) : null}
-                  </>
-                ) : (
-                  <p className="muted">Ora has not prepared a recommendation.</p>
-                )}
-              </section>
-
-              <section
-                className="signal-section-card"
-                data-chat-explain="true"
-                data-chat-source="signal-section"
-                data-chat-title="Action plan"
-                data-chat-description={
-                  actionPlan
-                    ? `Exact proposed action: ${titleCase(actionPlan.actionType)}.`
-                    : "No exact action plan has been prepared yet."
-                }
-                data-chat-signal-id={signal.id}
-                data-chat-action-plan-id={actionPlan?.id}
-                data-chat-object-type="action_plan"
-                data-chat-object-id={actionPlan?.id ?? signal.id}
-                data-chat-prompt={`Explain the action plan for this Signal: ${signal.title}. Include whether approval or execution is blocked.`}
-              >
-                <SectionHeader
-                  icon={<FileCheck2 size={18} aria-hidden="true" />}
-                  label="Action plan"
-                  title={
-                    actionPlan
-                      ? titleCase(actionPlan.actionType)
-                      : "No exact action prepared"
-                  }
-                />
-                {actionPlan ? (
-                  <>
-                    <div className="signal-inline-badges">
-                      <StatusBadge status={actionPlan.status} />
-                      <StatusBadge status={actionPlan.provider} />
-                    </div>
-                    <div className="signal-plan-preview">
-                      <FactMini label="Created" value={formatDate(actionPlan.createdAt)} />
-                      <FactMini label="Updated" value={formatDate(actionPlan.updatedAt)} />
-                    </div>
-                    <details className="payload-details">
-                      <summary>Preview exact payload</summary>
-                      <pre>{JSON.stringify(actionPlan.previewPayload, null, 2)}</pre>
-                    </details>
-                  </>
-                ) : (
-                  <p className="muted">
-                    This Signal is informational until Ora can prepare an exact
-                    action.
-                  </p>
-                )}
-              </section>
+                <span>detected {formatDate(signal.detectedAt)}</span>
+              </p>
             </div>
 
-            <section
-              className="signal-section-card"
-              data-chat-explain="true"
-              data-chat-source="signal-section"
-              data-chat-title="Approval, execution, outcome"
-              data-chat-description="The strict mutation path for this Signal."
-              data-chat-signal-id={signal.id}
-              data-chat-action-plan-id={actionPlan?.id}
-              data-chat-object-type="signal_mutation_path"
-              data-chat-object-id={actionPlan?.id ?? signal.id}
-              data-chat-prompt={`Explain the approval, execution, and outcome status for this Signal: ${signal.title}.`}
-            >
-              <SectionHeader
-                icon={<ShieldCheck size={18} aria-hidden="true" />}
-                label="Approval, execution, outcome"
-                title="Strict mutation path"
-              />
-              <div className="signal-path-grid">
-                <PathPanel
-                  label="Approval"
-                  status={actionPlan?.approval ? "approved" : "required"}
-                  body={
-                    actionPlan?.approval
-                      ? `Approved on ${formatDate(actionPlan.approval.approvedAt)}.`
-                      : "Approval locks the exact execution payload before any connected system can be changed."
-                  }
-                  footnote={
-                    actionPlan?.approval
-                      ? `Payload hash: ${actionPlan.approval.approvalPayloadHash}`
-                      : null
-                  }
-                />
-                <PathPanel
-                  label="Execution"
-                  status={latestExecution?.status ?? "not run"}
-                  body={
-                    latestExecution
-                      ? latestExecution.errorMessage ??
-                        `Executed ${latestExecution.toolName} on ${formatDate(
-                          latestExecution.executedAt,
-                        )}.`
-                      : actionPlan && !canExecutePlan
-                        ? "This grouped action is approval-ready, but live execution for this provider is not enabled yet."
-                      : "Execution waits until approval exists and the payload still matches."
-                  }
-                />
-                <PathPanel
-                  label="Outcome"
-                  status={latestOutcome?.status ?? "pending"}
-                  body={
-                    latestOutcome
-                      ? latestOutcome.summary
-                      : "Outcome tracking starts after the approved action is verified."
-                  }
-                  footnote={
-                    latestOutcome
-                      ? `Measured ${formatDate(latestOutcome.measuredAt)}`
-                      : null
-                  }
-                />
-              </div>
-            </section>
-          </div>
+            <ol className="signal-stage-track" aria-label="Signal pipeline">
+              {stages.map((stage) => (
+                <li
+                  className={`signal-stage signal-stage-${stage.state}`}
+                  data-chat-explain="true"
+                  data-chat-source="signal-lifecycle"
+                  data-chat-title={stage.label}
+                  data-chat-description={stage.detail}
+                  data-chat-signal-id={signal.id}
+                  data-chat-action-plan-id={actionPlan?.id}
+                  data-chat-object-type="signal_lifecycle_step"
+                  data-chat-object-id={`${signal.id}:${stage.key}`}
+                  data-chat-prompt={`Explain the ${stage.label} stage for this Signal: ${signal.title}. Current state: ${stage.detail}.`}
+                  key={stage.key}
+                >
+                  <ChatOpenButton
+                    label={`Open ${stage.label} stage in chat`}
+                    hint={`${stage.label} stage`}
+                  />
+                  <span className="signal-stage-dot" aria-hidden="true" />
+                  <span className="signal-stage-text">
+                    <strong>{stage.label}</strong>
+                    <small>{stage.detail}</small>
+                  </span>
+                </li>
+              ))}
+            </ol>
+          </header>
 
-          <aside className="signal-side-panel">
-            <section
-              className="signal-next-action"
-              data-chat-explain="true"
-              data-chat-source="signal-next-action"
-              data-chat-title="Next action"
-              data-chat-description={nextActionTitle(
-                Boolean(actionPlan),
-                Boolean(actionPlan?.approval),
-                Boolean(latestExecution),
-                canExecutePlan,
-              )}
-              data-chat-signal-id={signal.id}
-              data-chat-action-plan-id={actionPlan?.id}
-              data-chat-object-type="next_action"
-              data-chat-object-id={actionPlan?.id ?? signal.id}
-              data-chat-prompt={`Explain the next action for this Signal: ${signal.title}.`}
-            >
-              <ChatOpenButton label="Open next action in chat" />
-              <div className="signal-next-icon">
+          <div
+            className="signal-decision-action"
+            data-chat-explain="true"
+            data-chat-source="signal-next-action"
+            data-chat-title={guidance.title}
+            data-chat-description={guidance.body}
+            data-chat-signal-id={signal.id}
+            data-chat-action-plan-id={actionPlan?.id}
+            data-chat-object-type="next_action"
+            data-chat-object-id={actionPlan?.id ?? signal.id}
+            data-chat-prompt={`Explain the next action for this Signal: ${signal.title}. Current state: ${guidance.title}.`}
+          >
+            <ChatOpenButton label="Open next action in chat" hint="Next action" />
+            <div className="signal-decision-action-head">
+              <span className="signal-decision-icon">
                 <Gauge size={18} aria-hidden="true" />
-              </div>
+              </span>
               <div>
                 <p className="kicker">Next action</p>
-                <h2>
-                  {nextActionTitle(
-                    Boolean(actionPlan),
-                    Boolean(actionPlan?.approval),
-                    Boolean(latestExecution),
-                    canExecutePlan,
-                  )}
-                </h2>
-                <p>
-                  {nextActionBody(
-                    Boolean(actionPlan),
-                    Boolean(actionPlan?.approval),
-                    Boolean(latestExecution),
-                    canExecutePlan,
-                  )}
-                </p>
+                <h3>{guidance.title}</h3>
+                <p className="signal-decision-action-body">{guidance.body}</p>
               </div>
+            </div>
 
-              {actionPlan && !actionPlan.approval && canManage ? (
+            {recommendation ? (
+              <div className="signal-decision-recommendation">
+                <div className="signal-decision-recommendation-head">
+                  <Lightbulb size={15} aria-hidden="true" />
+                  <span>Ora recommends</span>
+                  <RiskBadge risk={recommendation.riskLevel} />
+                  <span className="signal-decision-confidence">
+                    {Math.round(recommendation.confidence * 100)}% confidence
+                  </span>
+                </div>
+                <p className="signal-decision-recommendation-title">
+                  {recommendation.title}
+                </p>
+                {actionPlan ? (
+                  <p className="signal-decision-payload-summary">
+                    <span>Will do:</span> {payloadSummary}
+                  </p>
+                ) : null}
+              </div>
+            ) : null}
+
+            <div className="signal-decision-buttons">
+              {actionPlan && canApprovePlan && canManage ? (
                 <form action={approveActionPlanAction}>
                   <input type="hidden" name="actionPlanId" value={actionPlan.id} />
                   <input
@@ -656,7 +263,7 @@ export default async function SignalDetailPage({
                     value="Approved in Ora Signal detail UI."
                   />
                   <button className="button button-primary" type="submit">
-                    Approve exact action
+                    Approve plan
                   </button>
                 </form>
               ) : null}
@@ -668,16 +275,9 @@ export default async function SignalDetailPage({
                 <form action={executeActionPlanAction}>
                   <input type="hidden" name="actionPlanId" value={actionPlan.id} />
                   <button className="button button-primary" type="submit">
-                    Execute approved action
+                    {executionButtonLabel(actionPlan)}
                   </button>
                 </form>
-              ) : null}
-
-              {actionPlan?.approval && !canExecutePlan ? (
-                <p className="muted text-sm">
-                  This action can be approved for review, but live execution for{" "}
-                  {titleCase(actionPlan.provider)} is not wired yet.
-                </p>
               ) : null}
 
               {actionPlan && !canManage ? (
@@ -685,134 +285,484 @@ export default async function SignalDetailPage({
                   Only owners and admins can approve or execute actions.
                 </p>
               ) : null}
-            </section>
+            </div>
+          </div>
+        </section>
 
+        <div className="signal-body">
+          <section
+            className="signal-section-card"
+            data-chat-explain="true"
+            data-chat-source="signal-section"
+            data-chat-title="What happened"
+            data-chat-description={signal.summary}
+            data-chat-signal-id={signal.id}
+            data-chat-action-plan-id={actionPlan?.id}
+            data-chat-object-type="signal"
+            data-chat-object-id={signal.id}
+            data-chat-prompt={`Explain what happened in this Signal: ${signal.title}.`}
+          >
+            <ChatOpenButton label="Open What happened in chat" hint="What happened" />
+            <CompactSectionHeader
+              icon={<Target size={16} aria-hidden="true" />}
+              label="What happened"
+            />
+            <p className="signal-section-copy">{signal.summary}</p>
+            <div className="signal-fact-strip">
+              <FactCell label="Type" value={titleCase(signal.type)} />
+              <FactCell
+                label="Affected"
+                value={titleCase(signal.affectedObjectType)}
+              />
+              <FactCell label="Updated" value={formatDate(signal.updatedAt)} />
+              <FactCell
+                label={customerGroup ? "Customer group" : "Active catalog"}
+                value={
+                  customerGroup
+                    ? `${customerGroup.memberCount} members`
+                    : activeProductCount
+                      ? String(activeProductCount)
+                      : "Unknown"
+                }
+              />
+            </div>
+          </section>
+
+          <section
+            className="signal-section-card"
+            data-chat-explain="true"
+            data-chat-source="signal-section"
+            data-chat-title="Evidence"
+            data-chat-description="Observed facts behind the Signal."
+            data-chat-signal-id={signal.id}
+            data-chat-action-plan-id={actionPlan?.id}
+            data-chat-object-type="signal"
+            data-chat-object-id={signal.id}
+            data-chat-prompt={`Explain the evidence for this Signal: ${signal.title}.`}
+          >
+            <ChatOpenButton label="Open Evidence in chat" hint="Evidence" />
+            <CompactSectionHeader
+              icon={<Database size={16} aria-hidden="true" />}
+              label="Evidence"
+              meta={`${signal.evidence.length} record${
+                signal.evidence.length === 1 ? "" : "s"
+              } · ${evidenceFacts.length} unique`}
+            />
+            <div className="evidence-overview">
+              <EvidenceMetric
+                label="Detected"
+                value={
+                  affectedCount
+                    ? String(affectedCount)
+                    : String(signal.evidence.length)
+                }
+                hint={affectedLabel(signal.affectedObjectType)}
+              />
+              <EvidenceMetric
+                label="Unique facts"
+                value={String(evidenceFacts.length)}
+                hint={`${signal.evidence.length} record${
+                  signal.evidence.length === 1 ? "" : "s"
+                }`}
+              />
+              <EvidenceMetric
+                label="Top blocker"
+                value={
+                  topEvidenceReason
+                    ? titleCase(topEvidenceReason.reason)
+                    : "Not tagged"
+                }
+                hint={
+                  topEvidenceReason
+                    ? `${topEvidenceReason.count} example${
+                        topEvidenceReason.count === 1 ? "" : "s"
+                      }`
+                    : "No example reasons"
+                }
+              />
+              <EvidenceMetric
+                label="Source"
+                value={
+                  evidenceProviders.length
+                    ? evidenceProviders.map(titleCase).join(", ")
+                    : "Unknown"
+                }
+                hint={
+                  latestEvidenceObservedAt
+                    ? `Observed ${formatDate(latestEvidenceObservedAt)}`
+                    : "No observation date"
+                }
+              />
+            </div>
+            <ul className="evidence-list">
+              {evidenceFacts.map((fact) => (
+                <li className="evidence-row" key={fact.key}>
+                  <div className="evidence-row-main">
+                    <p className="kicker">
+                      {fact.title}
+                      {fact.count > 1 ? (
+                        <span className="evidence-count">×{fact.count}</span>
+                      ) : null}
+                    </p>
+                    <p>{fact.summary}</p>
+                  </div>
+                  <div className="evidence-row-meta">
+                    {fact.providers.map((provider) => (
+                      <StatusBadge key={provider} status={provider} />
+                    ))}
+                    <span>{formatDate(fact.observedAt)}</span>
+                  </div>
+                </li>
+              ))}
+            </ul>
+
+            {evidenceExamples.length ? (
+              <div className="signal-examples">
+                <div className="signal-examples-header">
+                  <h3>Example products</h3>
+                  <span>{evidenceExamples.length} shown from evidence</span>
+                </div>
+                <div className="signal-example-list">
+                  {evidenceExamples.map((example, index) => (
+                    <article
+                      className="signal-example-row"
+                      key={`${example.title}-${index}`}
+                    >
+                      <div className="signal-example-number">
+                        {String(index + 1).padStart(2, "0")}
+                      </div>
+                      <div>
+                        <h4>{example.title}</h4>
+                        <div className="signal-example-meta">
+                          <span>
+                            {example.productType ?? "No product type"}
+                          </span>
+                          <span>
+                            {example.totalInventory == null
+                              ? "Inventory unknown"
+                              : `${example.totalInventory} units`}
+                          </span>
+                          <span>
+                            {example.tags == null
+                              ? "Tags unknown"
+                              : `${example.tags} tag${
+                                  example.tags === 1 ? "" : "s"
+                                }`}
+                          </span>
+                          <span>
+                            {example.descriptionLength == null
+                              ? "Copy unknown"
+                              : `${example.descriptionLength} copy chars`}
+                          </span>
+                        </div>
+                        {example.reasons.length ? (
+                          <div className="signal-reason-row">
+                            {example.reasons.map((reason) => (
+                              <span className="badge" key={reason}>
+                                {reason}
+                              </span>
+                            ))}
+                          </div>
+                        ) : null}
+                      </div>
+                    </article>
+                  ))}
+                </div>
+              </div>
+            ) : null}
+          </section>
+
+          {customerGroup ? (
             <section
-              className="signal-facts-panel"
+              className="signal-section-card"
               data-chat-explain="true"
-              data-chat-source="signal-facts"
-              data-chat-title="Signal facts"
-              data-chat-description={`Type ${titleCase(signal.type)}, severity ${titleCase(
-                signal.severity,
-              )}, status ${titleCase(signal.status)}.`}
+              data-chat-source="signal-section"
+              data-chat-title={customerGroup.name}
+              data-chat-description={customerGroup.description}
               data-chat-signal-id={signal.id}
               data-chat-action-plan-id={actionPlan?.id}
-              data-chat-object-type="signal_facts"
-              data-chat-object-id={signal.id}
-              data-chat-prompt={`Explain the facts and metadata for this Signal: ${signal.title}.`}
+              data-chat-object-type="customer_group"
+              data-chat-object-id={customerGroup.id}
+              data-chat-prompt={`Explain this customer group and what grouped actions make sense: ${customerGroup.name}.`}
             >
-              <ChatOpenButton label="Open Signal facts in chat" />
-              <h2 className="section-title">Signal facts</h2>
-              <dl>
-                <FactRow label="Type" value={titleCase(signal.type)} />
-                <FactRow label="Severity" value={titleCase(signal.severity)} />
-                <FactRow label="Status" value={titleCase(signal.status)} />
-                <FactRow label="Category" value={titleCase(signal.category)} />
-                <FactRow
-                  label="Affected"
-                  value={titleCase(signal.affectedObjectType)}
-                />
-                <FactRow label="Detected" value={formatDate(signal.detectedAt)} />
-                <FactRow label="Updated" value={formatDate(signal.updatedAt)} />
-              </dl>
+              <ChatOpenButton
+                label={`Open ${customerGroup.name} in chat`}
+                hint="Customer group"
+              />
+              <CompactSectionHeader
+                icon={<UsersRound size={16} aria-hidden="true" />}
+                label="Customer group"
+                meta={`${customerGroup.memberCount} members · ${formatMoneyFromCents(
+                  customerGroup.estimatedRevenueCents,
+                )}`}
+              />
+              <p className="signal-section-copy">
+                {customerGroup.description}
+              </p>
+              {customerMembers.length ? (
+                <div className="customer-table-wrap">
+                  <table className="customer-table">
+                    <thead>
+                      <tr>
+                        <th>Customer</th>
+                        <th>Stage</th>
+                        <th>Orders</th>
+                        <th>Spend</th>
+                        <th>Last order</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {customerMembers.slice(0, 8).map((member, index) => (
+                        <tr key={`${member.shopifyCustomerId}-${index}`}>
+                          <td>
+                            <strong>
+                              {member.name ??
+                                member.email ??
+                                "Shopify customer"}
+                            </strong>
+                          </td>
+                          <td>{titleCase(member.lifecycleStage)}</td>
+                          <td>
+                            {member.orderCount == null
+                              ? "—"
+                              : member.orderCount}
+                          </td>
+                          <td>
+                            {formatCustomerSpend(
+                              member.totalSpentCents,
+                              member.currency,
+                            )}
+                          </td>
+                          <td>
+                            {member.lastOrderAt
+                              ? formatDate(member.lastOrderAt)
+                              : "—"}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : null}
             </section>
-          </aside>
+          ) : null}
+
+          <section
+            className="signal-section-card"
+            data-chat-explain="true"
+            data-chat-source="signal-section"
+            data-chat-title="Action plan"
+            data-chat-description={
+              actionPlan
+                ? `Exact proposed action: ${titleCase(actionPlan.actionType)}.`
+                : "No exact action plan has been prepared yet."
+            }
+            data-chat-signal-id={signal.id}
+            data-chat-action-plan-id={actionPlan?.id}
+            data-chat-object-type="action_plan"
+            data-chat-object-id={actionPlan?.id ?? signal.id}
+            data-chat-prompt={`Explain the action plan for this Signal: ${signal.title}. Include whether approval or execution is blocked.`}
+          >
+            <ChatOpenButton label="Open Action plan in chat" hint="Action plan" />
+            <CompactSectionHeader
+              icon={<Lightbulb size={16} aria-hidden="true" />}
+              label="Action plan"
+              meta={
+                actionPlan
+                  ? `${titleCase(actionPlan.provider)} · ${titleCase(
+                      actionPlan.status,
+                    )}`
+                  : "Not prepared"
+              }
+            />
+
+            {actionPlan && planPlain ? (
+              <>
+                <p className="signal-section-copy">
+                  <strong>{planPlain.headline}.</strong> {payloadSummary}
+                </p>
+                <p className="muted text-sm signal-section-secondary">
+                  {planPlain.body}
+                </p>
+                {planPlain.operatorDecision || planPlain.requiredReview.length ? (
+                  <div className="signal-plan-checklist">
+                    {planPlain.operatorDecision ? (
+                      <div>
+                        <strong>Decision needed</strong>
+                        <p>{planPlain.operatorDecision}</p>
+                      </div>
+                    ) : null}
+                    {planPlain.requiredReview.length ? (
+                      <div>
+                        <strong>Required review</strong>
+                        <ul>
+                          {planPlain.requiredReview.map((item) => (
+                            <li key={item}>{item}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    ) : null}
+                  </div>
+                ) : null}
+                <details className="payload-raw">
+                  <summary>Technical payload</summary>
+                  <pre className="payload-inline">
+                    {JSON.stringify(actionPlan.previewPayload, null, 2)}
+                  </pre>
+                </details>
+              </>
+            ) : (
+              <p className="muted text-sm">
+                This Signal is informational until Ora can prepare an exact
+                action.
+              </p>
+            )}
+
+            {recommendation ? (
+              <details className="reasoning-block">
+                <summary>Why Ora recommends this</summary>
+                <div className="reasoning-block-body">
+                  <p>{recommendation.reasoning}</p>
+                  {recommendation.expectedImpact ? (
+                    <div className="signal-callout">
+                      <CheckCircle2 size={16} aria-hidden="true" />
+                      <p>{recommendation.expectedImpact}</p>
+                    </div>
+                  ) : null}
+                </div>
+              </details>
+            ) : null}
+          </section>
         </div>
+
+        {showHistory ? (
+          <section className="signal-history" aria-label="Signal history">
+            <h2 className="section-title">History</h2>
+            <div className="signal-history-grid">
+              {actionPlan?.approval ? (
+                <HistoryCard
+                  label="Approval"
+                  status="approved"
+                  body={`Approved on ${formatDate(actionPlan.approval.approvedAt)}.`}
+                  footnote={`Payload hash: ${actionPlan.approval.approvalPayloadHash}`}
+                  signalId={signal.id}
+                  actionPlanId={actionPlan.id}
+                  signalTitle={signal.title}
+                />
+              ) : null}
+              {latestExecution ? (
+                <HistoryCard
+                  label="Execution"
+                  status={latestExecution.status}
+                  body={
+                    latestExecution.errorMessage ??
+                    `Executed ${latestExecution.toolName} on ${formatDate(
+                      latestExecution.executedAt,
+                    )}.`
+                  }
+                  signalId={signal.id}
+                  actionPlanId={actionPlan?.id}
+                  signalTitle={signal.title}
+                />
+              ) : null}
+              {latestOutcome ? (
+                <HistoryCard
+                  label="Outcome"
+                  status={latestOutcome.status}
+                  body={latestOutcome.summary}
+                  footnote={`Measured ${formatDate(latestOutcome.measuredAt)}`}
+                  signalId={signal.id}
+                  actionPlanId={actionPlan?.id}
+                  signalTitle={signal.title}
+                />
+              ) : null}
+            </div>
+          </section>
+        ) : null}
       </div>
     </>
   );
 }
 
-function MetricTile({
-  label,
-  value,
-  hint,
-  meter,
-}: {
-  label: string;
-  value: string;
-  hint: string;
-  meter?: number;
-}) {
-  return (
-    <div className="signal-score-card">
-      <span>{label}</span>
-      <strong>{value}</strong>
-      <small>{hint}</small>
-      {typeof meter === "number" ? (
-        <div className="signal-meter" aria-hidden="true">
-          <span style={{ width: `${Math.max(0, Math.min(100, meter))}%` }} />
-        </div>
-      ) : null}
-    </div>
-  );
-}
-
-function SectionHeader({
+function CompactSectionHeader({
   icon,
   label,
-  title,
+  meta,
 }: {
-  icon: ReactNode;
+  icon: React.ReactNode;
   label: string;
-  title: string;
+  meta?: string;
 }) {
   return (
-    <header className="signal-section-header">
-      <span className="signal-section-icon">{icon}</span>
-      <div>
-        <p className="kicker">{label}</p>
-        <h2>{title}</h2>
-      </div>
-      <ChatOpenButton label={`Open ${label} in chat`} />
+    <header className="signal-compact-header">
+      <span className="signal-compact-header-icon">{icon}</span>
+      <h2>{label}</h2>
+      {meta ? <span className="signal-compact-header-meta">{meta}</span> : null}
     </header>
   );
 }
 
-function FactMini({ label, value }: { label: string; value: string }) {
+function EvidenceMetric({
+  label,
+  value,
+  hint,
+}: {
+  label: string;
+  value: string;
+  hint: string;
+}) {
   return (
-    <div className="signal-mini-fact">
+    <div className="evidence-metric">
+      <span>{label}</span>
+      <strong>{value}</strong>
+      <small>{hint}</small>
+    </div>
+  );
+}
+
+function FactCell({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="signal-fact-cell">
       <span>{label}</span>
       <strong>{value}</strong>
     </div>
   );
 }
 
-function FactRow({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="signal-fact-row">
-      <dt>{label}</dt>
-      <dd>{value}</dd>
-    </div>
-  );
-}
-
-function PathPanel({
+function HistoryCard({
   label,
   status,
   body,
   footnote,
+  signalId,
+  actionPlanId,
+  signalTitle,
 }: {
   label: string;
   status: string;
   body: string;
   footnote?: string | null;
+  signalId: string;
+  actionPlanId?: string;
+  signalTitle: string;
 }) {
   return (
     <article
-      className="signal-path-panel"
+      className="signal-history-card"
       data-chat-explain="true"
       data-chat-source="signal-path-panel"
       data-chat-title={label}
       data-chat-description={body}
+      data-chat-signal-id={signalId}
+      data-chat-action-plan-id={actionPlanId}
       data-chat-object-type="signal_path_step"
-      data-chat-prompt={`Explain this ${label} status: ${status}. ${body}`}
+      data-chat-prompt={`Explain this ${label} status for the Signal "${signalTitle}": ${status}. ${body}`}
     >
-      <ChatOpenButton label={`Open ${label} status in chat`} />
-      <div>
+      <ChatOpenButton label={`Open ${label} status in chat`} hint={`${label} status`} />
+      <header>
         <p className="kicker">{label}</p>
         <StatusBadge status={status} />
-      </div>
+      </header>
       <p>{body}</p>
       {footnote ? <small>{footnote}</small> : null}
     </article>
@@ -851,47 +801,9 @@ function parseEvidenceExamples(value: unknown): EvidenceExample[] {
 function affectedLabel(value: string) {
   if (value === "store") return "Store-level";
   if (value === "product") return "Products";
-  if (value === "customer_segment") return "Customer segment";
+  if (value === "customer_segment") return "Customers";
   if (value === "collection") return "Collection";
   return titleCase(value);
-}
-
-function nextActionTitle(
-  hasActionPlan: boolean,
-  hasApproval: boolean,
-  hasExecution: boolean,
-  canExecutePlan: boolean,
-) {
-  if (!hasActionPlan) return "Review evidence";
-  if (!hasApproval) return "Approve exact action";
-  if (!canExecutePlan) return "Ready for operator review";
-  if (!hasExecution) return "Execute approved action";
-  return "Track outcome";
-}
-
-function nextActionBody(
-  hasActionPlan: boolean,
-  hasApproval: boolean,
-  hasExecution: boolean,
-  canExecutePlan: boolean,
-) {
-  if (!hasActionPlan) {
-    return "This Signal does not have an executable plan yet, so the useful step is evidence review.";
-  }
-
-  if (!hasApproval) {
-    return "Approve only if the previewed payload is exactly the change you want Ora to make.";
-  }
-
-  if (!canExecutePlan) {
-    return "Ora prepared the exact grouped action. Live execution for this provider still needs a dedicated executor.";
-  }
-
-  if (!hasExecution) {
-    return "Ora will validate the approved payload hash before any Shopify mutation runs.";
-  }
-
-  return "Watch whether the Signal improves, resolves, or needs a different action.";
 }
 
 function parseCustomerMembers(value: unknown): CustomerMemberExample[] {
@@ -921,26 +833,13 @@ function formatCustomerSpend(
   totalSpentCents: number | null,
   currency: string | null,
 ) {
-  if (totalSpentCents == null) return "Spend unknown";
+  if (totalSpentCents == null) return "—";
 
-  const amount = new Intl.NumberFormat("en", {
+  return new Intl.NumberFormat("en", {
     maximumFractionDigits: 0,
     style: "currency",
     currency: currency ?? "USD",
   }).format(totalSpentCents / 100);
-
-  return `${amount} lifetime spend`;
-}
-
-function isExecutableActionPlan(
-  actionPlan: { provider: string; executionPayload: unknown } | null | undefined,
-) {
-  const payload = asRecord(actionPlan?.executionPayload);
-
-  return (
-    actionPlan?.provider === "shopify" &&
-    payload?.toolName === "shopify_setProductReferenceMetafield"
-  );
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {

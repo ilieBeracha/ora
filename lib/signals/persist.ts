@@ -4,8 +4,13 @@ import {
   detectDraftCatalogSignals,
   detectProductHealthSignals,
   isGiftCardProduct,
+  type ProductHealthCandidate,
+  type StoreCatalogCandidate,
 } from "@/lib/signals/product-health";
+import { buildStoreSignalActionPlan } from "@/lib/signals/action-plans";
 import { syncCustomerLifecycleForConnection } from "@/lib/lifecycle/sync";
+
+type StoreSignalCandidate = ProductHealthCandidate | StoreCatalogCandidate;
 
 const managedStoreSignalTypes = [
   "product_missing_important_metafields",
@@ -115,33 +120,13 @@ export async function detectSignalsForConnection(shopifyConnectionId: string) {
       },
     });
 
-    const hasRecommendation = await prisma.recommendation.findFirst({
-      where: { signalId: signal.id },
+    const recommendation = await upsertStoreRecommendation(signal.id, candidate);
+    await upsertStoreActionPlan({
+      candidate,
+      recommendationId: recommendation.id,
+      shopifyConnectionId,
+      signalId: signal.id,
     });
-
-    if (hasRecommendation) {
-      await prisma.recommendation.update({
-        where: { id: hasRecommendation.id },
-        data: {
-          title: candidate.recommendationTitle,
-          reasoning: candidate.recommendationReasoning,
-          expectedImpact: candidate.expectedImpact,
-          riskLevel: candidate.riskLevel,
-          confidence: candidate.confidence,
-        },
-      });
-    } else {
-      await prisma.recommendation.create({
-        data: {
-          signalId: signal.id,
-          title: candidate.recommendationTitle,
-          reasoning: candidate.recommendationReasoning,
-          expectedImpact: candidate.expectedImpact,
-          riskLevel: candidate.riskLevel,
-          confidence: candidate.confidence,
-        },
-      });
-    }
   }
 
   for (const candidate of draftCatalog) {
@@ -196,22 +181,13 @@ export async function detectSignalsForConnection(shopifyConnectionId: string) {
       },
     });
 
-    const hasRecommendation = await prisma.recommendation.findFirst({
-      where: { signalId: signal.id },
+    const recommendation = await upsertStoreRecommendation(signal.id, candidate);
+    await upsertStoreActionPlan({
+      candidate,
+      recommendationId: recommendation.id,
+      shopifyConnectionId,
+      signalId: signal.id,
     });
-
-    if (!hasRecommendation) {
-      await prisma.recommendation.create({
-        data: {
-          signalId: signal.id,
-          title: candidate.recommendationTitle,
-          reasoning: candidate.recommendationReasoning,
-          expectedImpact: candidate.expectedImpact,
-          riskLevel: candidate.riskLevel,
-          confidence: candidate.confidence,
-        },
-      });
-    }
   }
 
   let lifecycleResult: Awaited<
@@ -247,4 +223,88 @@ export async function detectSignalsForConnection(shopifyConnectionId: string) {
       productHealth.length + draftCatalog.length + (lifecycleResult?.candidates ?? 0),
     scannedProducts: products.length,
   };
+}
+
+async function upsertStoreRecommendation(
+  signalId: string,
+  candidate: StoreSignalCandidate,
+) {
+  const existing = await prisma.recommendation.findFirst({
+    where: { signalId },
+  });
+
+  if (existing) {
+    return prisma.recommendation.update({
+      where: { id: existing.id },
+      data: {
+        title: candidate.recommendationTitle,
+        reasoning: candidate.recommendationReasoning,
+        expectedImpact: candidate.expectedImpact,
+        riskLevel: candidate.riskLevel,
+        confidence: candidate.confidence,
+      },
+    });
+  }
+
+  return prisma.recommendation.create({
+    data: {
+      signalId,
+      title: candidate.recommendationTitle,
+      reasoning: candidate.recommendationReasoning,
+      expectedImpact: candidate.expectedImpact,
+      riskLevel: candidate.riskLevel,
+      confidence: candidate.confidence,
+    },
+  });
+}
+
+async function upsertStoreActionPlan({
+  candidate,
+  recommendationId,
+  shopifyConnectionId,
+  signalId,
+}: {
+  candidate: StoreSignalCandidate;
+  recommendationId: string;
+  shopifyConnectionId: string;
+  signalId: string;
+}) {
+  const plan = buildStoreSignalActionPlan(candidate, shopifyConnectionId);
+  const existing = await prisma.actionPlan.findFirst({
+    where: {
+      signalId,
+      actionType: plan.actionType,
+      provider: plan.provider,
+    },
+    orderBy: { createdAt: "desc" },
+    include: { approval: true },
+  });
+
+  if (existing?.approval || existing?.status === "executed") {
+    return existing;
+  }
+
+  if (existing) {
+    return prisma.actionPlan.update({
+      where: { id: existing.id },
+      data: {
+        recommendationId,
+        status: "approval_required",
+        previewPayload: plan.previewPayload as Prisma.InputJsonValue,
+        executionPayload: plan.executionPayload as Prisma.InputJsonValue,
+      },
+    });
+  }
+
+  return prisma.actionPlan.create({
+    data: {
+      signalId,
+      recommendationId,
+      actionType: plan.actionType,
+      provider: plan.provider,
+      status: "approval_required",
+      previewPayload: plan.previewPayload as Prisma.InputJsonValue,
+      executionPayload: plan.executionPayload as Prisma.InputJsonValue,
+    },
+  });
 }

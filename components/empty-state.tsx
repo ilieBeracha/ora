@@ -20,7 +20,7 @@ export function EmptyState({
       data-chat-description={body}
       data-chat-prompt={`Nothing is here yet for "${title}". What should I connect or do first to fill this view? Context: ${body}`}
     >
-      <ChatOpenButton label={`Ask how to fill ${title}`} />
+      <ChatOpenButton label={`Ask how to fill ${title}`} hint="Where to start" />
       <div className="empty-index">{note}</div>
       <div>
         <h2 className="section-title">{title}</h2>

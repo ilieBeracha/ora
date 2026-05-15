@@ -236,7 +236,7 @@ function suggestionsForLifecycleStep(
   const step = stepTitle.toLowerCase().trim();
   const detailNote = stepDetail ? ` (current: ${stepDetail})` : "";
 
-  if (step === "signal") {
+  if (step === "signal" || step === "detected") {
     return [
       {
         label: "What detected",

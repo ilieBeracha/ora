@@ -24,7 +24,7 @@ export function PageHeader({
         description ? `. ${description}` : ""
       }`}
     >
-      <ChatOpenButton label={`Ask about ${title}`} />
+      <ChatOpenButton label={`Ask about ${title}`} hint={`${title} page`} />
       <div className="page-marker">{marker ?? "Ora"}</div>
       <div className="layout-row">
         <div>
